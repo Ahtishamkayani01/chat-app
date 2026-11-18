@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:5000";
+// Strip trailing slashes: "https://x.app/" would produce "//api/..." which
+// Vercel 308-redirects to a relative path, causing an infinite redirect loop.
+const BACKEND_URL = (process.env.BACKEND_URL || "http://localhost:5000").replace(/\/+$/, "");
 
 const nextConfig: NextConfig = {
   cacheComponents: true,

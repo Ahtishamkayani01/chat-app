@@ -50,24 +50,35 @@ export default function Chat() {
     if (saved) setUsername(saved);
   }, []);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<boolean> => {
     try {
       const data = await api.list();
       setMessages(data);
       setError(null);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load messages");
+      return false;
     }
   }, []);
 
-  // Poll for new messages while a user is logged in.
+  // Poll for new messages while a user is logged in. Each poll waits for the
+  // previous one to finish, and backs off (up to 30s) while requests fail.
   useEffect(() => {
     if (!username) return;
-    const first = setTimeout(load, 0);
-    const id = setInterval(load, POLL_MS);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let delay = POLL_MS;
+    const tick = async () => {
+      const ok = await load();
+      if (cancelled) return;
+      delay = ok ? POLL_MS : Math.min(delay * 2, 30000);
+      timer = setTimeout(tick, delay);
+    };
+    timer = setTimeout(tick, 0);
     return () => {
-      clearTimeout(first);
-      clearInterval(id);
+      cancelled = true;
+      clearTimeout(timer);
     };
   }, [username, load]);
 
