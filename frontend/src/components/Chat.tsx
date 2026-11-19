@@ -2,9 +2,9 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, type Message } from "@/lib/api";
+import { socket, emitAsync } from "@/lib/socket";
 
 const NAME_KEY = "chat-username";
-const POLL_MS = 3000;
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -40,6 +40,7 @@ export default function Chat() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [connected, setConnected] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastCount = useRef(0);
 
@@ -62,23 +63,44 @@ export default function Chat() {
     }
   }, []);
 
-  // Poll for new messages while a user is logged in. Each poll waits for the
-  // previous one to finish, and backs off (up to 30s) while requests fail.
+  // Real-time connection: connect when the user joins and listen for live
+  // events. Handlers are idempotent, so receiving our own broadcast is safe.
   useEffect(() => {
     if (!username) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    let delay = POLL_MS;
-    const tick = async () => {
-      const ok = await load();
-      if (cancelled) return;
-      delay = ok ? POLL_MS : Math.min(delay * 2, 30000);
-      timer = setTimeout(tick, delay);
-    };
-    timer = setTimeout(tick, 0);
+
+    function onConnect() {
+      setConnected(true);
+      load(); // load history on first connect, and re-sync after a reconnect
+    }
+    function onDisconnect() {
+      setConnected(false);
+    }
+    function onNew(msg: Message) {
+      setMessages((prev) => (prev.some((m) => m._id === msg._id) ? prev : [...prev, msg]));
+    }
+    function onUpdated(msg: Message) {
+      setMessages((prev) => prev.map((m) => (m._id === msg._id ? msg : m)));
+    }
+    function onDeleted({ id }: { id: string }) {
+      setMessages((prev) => prev.filter((m) => m._id !== id));
+    }
+
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("message:new", onNew);
+    socket.on("message:updated", onUpdated);
+    socket.on("message:deleted", onDeleted);
+    socket.connect();
+
+    // Remove listeners (avoids duplicates in React Strict Mode) and disconnect.
     return () => {
-      cancelled = true;
-      clearTimeout(timer);
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("message:new", onNew);
+      socket.off("message:updated", onUpdated);
+      socket.off("message:deleted", onDeleted);
+      socket.disconnect();
+      setConnected(false);
     };
   }, [username, load]);
 
@@ -110,8 +132,8 @@ export default function Chat() {
     if (!value || !username || sending) return;
     setSending(true);
     try {
-      const msg = await api.create(username, value);
-      setMessages((prev) => [...prev, msg]);
+      const msg = await emitAsync<Message>("message:send", { sender: username, text: value });
+      setMessages((prev) => (prev.some((m) => m._id === msg._id) ? prev : [...prev, msg]));
       setText("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send");
@@ -124,7 +146,7 @@ export default function Chat() {
     const value = editText.trim();
     if (!value) return;
     try {
-      const updated = await api.update(id, value);
+      const updated = await emitAsync<Message>("message:edit", { id, text: value });
       setMessages((prev) => prev.map((m) => (m._id === id ? updated : m)));
       setEditingId(null);
     } catch (err) {
@@ -134,7 +156,7 @@ export default function Chat() {
 
   async function handleDelete(id: string) {
     try {
-      await api.remove(id);
+      await emitAsync("message:delete", { id });
       setMessages((prev) => prev.filter((m) => m._id !== id));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete");
@@ -188,6 +210,10 @@ export default function Chat() {
             </button>
           </div>
         </header>
+
+        {!connected && (
+          <div className="bg-amber-50 px-5 py-2 text-sm text-amber-700">Connecting…</div>
+        )}
 
         {error && (
           <div className="bg-red-50 px-5 py-2 text-sm text-red-700">{error}</div>
@@ -330,7 +356,7 @@ export default function Chat() {
           />
           <button
             type="submit"
-            disabled={!text.trim() || sending}
+            disabled={!text.trim() || sending || !connected}
             className="rounded-full bg-indigo-600 px-5 py-2 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
           >
             Send
