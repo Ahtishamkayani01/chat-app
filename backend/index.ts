@@ -1,5 +1,6 @@
 import express, { Request, Response, NextFunction } from "express";
 import messageRoutes from "./routes/message.routes.js"; // new
+import userRoutes from "./routes/user.routes";
 import { connectDB } from "./src/config/db";
 import { createServer } from "http";
 import { Server } from "socket.io";
@@ -14,6 +15,7 @@ app.get("/", (req: Request, res: Response) => {
 });
 
 app.use("/api/messages", messageRoutes); // new
+app.use("/api/users", userRoutes);
 
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   console.error(err);

@@ -1,88 +1,143 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { api, type Message } from "@/lib/api";
+import { api, type Conversation, type Message } from "@/lib/api";
 import { socket, emitAsync } from "@/lib/socket";
+import { formatDay, isSameDay } from "@/lib/format";
+import { Avatar, GlobalAvatar } from "./Avatar";
+import MessageItem from "./MessageItem";
+import Sidebar, { GLOBAL_KEY } from "./Sidebar";
 
 const NAME_KEY = "chat-username";
 
-function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+// ---------- helpers ----------
+
+/** Which chat does this message belong to, from my point of view? null = global. */
+function chatOf(m: Message, me: string): string | null {
+  if (!m.receiver) return null;
+  return m.sender === me ? m.receiver : m.sender;
 }
 
-function PencilIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="currentColor" className="h-3 w-3" aria-hidden="true">
-      <path d="M13.586 3.586a2 2 0 1 1 2.828 2.828l-.793.793-2.828-2.828.793-.793ZM11.379 5.793 3 14.172V17h2.828l8.38-8.379-2.83-2.828Z" />
-    </svg>
-  );
+function addUnique(list: Message[], msg: Message) {
+  return list.some((m) => m._id === msg._id) ? list : [...list, msg];
 }
 
-function TrashIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="currentColor" className="h-3 w-3" aria-hidden="true">
-      <path
-        fillRule="evenodd"
-        d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z"
-        clipRule="evenodd"
-      />
-    </svg>
-  );
+/** Put this conversation at the top with its newest message. */
+function bumpConversation(list: Conversation[], other: string, msg: Message) {
+  const current = list.find((c) => c.with === other);
+  if (current && new Date(current.lastMessage.createdAt) > new Date(msg.createdAt)) return list;
+  return [{ with: other, lastMessage: msg }, ...list.filter((c) => c.with !== other)];
 }
+
+// ---------- component ----------
 
 export default function Chat() {
   const [username, setUsername] = useState<string | null>(null);
   const [nameInput, setNameInput] = useState("");
+
+  const [activeChat, setActiveChat] = useState<string | null>(null); // null = global
+  const activeChatRef = useRef<string | null>(null); // read inside socket listeners
+  const [mobileShowChat, setMobileShowChat] = useState(false);
+
   const [messages, setMessages] = useState<Message[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const conversationsRef = useRef<Conversation[]>([]); // read inside socket listeners
+  const [unread, setUnread] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editText, setEditText] = useState("");
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [connected, setConnected] = useState(false);
+  const [connected, setConnected] = useState(false); // true once connected AND joined
+  const [syncKey, setSyncKey] = useState(0); // bump to reload history (e.g. after reconnect)
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastCount = useRef(0);
 
-  // Restore the saved name after mount (localStorage is browser-only).
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
+
+  // Restore saved name after mount (localStorage is browser-only).
   useEffect(() => {
     const saved = localStorage.getItem(NAME_KEY);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (saved) setUsername(saved);
   }, []);
 
-  const load = useCallback(async (): Promise<boolean> => {
+  const refreshConversations = useCallback(async () => {
+    if (!username) return;
     try {
-      const data = await api.list();
-      setMessages(data);
-      setError(null);
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load messages");
-      return false;
+      setConversations(await api.conversations(username));
+    } catch {
+      /* sidebar is non-critical */
     }
-  }, []);
+  }, [username]);
 
-  // Real-time connection: connect when the user joins and listen for live
-  // events. Handlers are idempotent, so receiving our own broadcast is safe.
+  // Load history for the open chat (global or DM). Re-runs when chat changes or after reconnect.
   useEffect(() => {
     if (!username) return;
+    let cancelled = false; // ignore late responses if the user switched chats meanwhile
+    (async () => {
+      try {
+        const data = activeChat ? await api.dm(username, activeChat) : await api.list();
+        if (!cancelled) {
+          setMessages(data);
+          setError(null);
+        }
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load messages");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [username, activeChat, syncKey]);
 
-    function onConnect() {
-      setConnected(true);
-      load(); // load history on first connect, and re-sync after a reconnect
+  // Real-time connection.
+  useEffect(() => {
+    if (!username) return;
+    const me = username;
+
+    async function onConnect() {
+      try {
+        await emitAsync("user:join", { username: me }); // join my personal room
+        setConnected(true);
+        setSyncKey((k) => k + 1); // re-sync history in case we missed messages
+        refreshConversations();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to join");
+      }
     }
     function onDisconnect() {
       setConnected(false);
     }
+
     function onNew(msg: Message) {
-      setMessages((prev) => (prev.some((m) => m._id === msg._id) ? prev : [...prev, msg]));
+      const chat = chatOf(msg, me);
+      if (chat) setConversations((prev) => bumpConversation(prev, chat, msg));
+
+      if (chat === activeChatRef.current) {
+        setMessages((prev) => addUnique(prev, msg));
+      } else if (msg.sender !== me) {
+        const key = chat ?? GLOBAL_KEY;
+        setUnread((prev) => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
+      }
     }
+
     function onUpdated(msg: Message) {
       setMessages((prev) => prev.map((m) => (m._id === msg._id ? msg : m)));
+      setConversations((prev) =>
+        prev.map((c) => (c.lastMessage._id === msg._id ? { ...c, lastMessage: msg } : c)),
+      );
     }
+
     function onDeleted({ id }: { id: string }) {
       setMessages((prev) => prev.filter((m) => m._id !== id));
+      // If the sidebar preview was this message, fetch the new latest one.
+      if (conversationsRef.current.some((c) => c.lastMessage._id === id)) refreshConversations();
     }
 
     socket.on("connect", onConnect);
@@ -92,7 +147,6 @@ export default function Chat() {
     socket.on("message:deleted", onDeleted);
     socket.connect();
 
-    // Remove listeners (avoids duplicates in React Strict Mode) and disconnect.
     return () => {
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
@@ -102,15 +156,29 @@ export default function Chat() {
       socket.disconnect();
       setConnected(false);
     };
-  }, [username, load]);
+  }, [username, refreshConversations]);
 
-  // Scroll to bottom only when new messages arrive.
+  // Scroll to bottom when messages are added; jump instantly when switching chats.
   useEffect(() => {
     if (messages.length > lastCount.current) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      bottomRef.current?.scrollIntoView({ behavior: lastCount.current === 0 ? "auto" : "smooth" });
     }
     lastCount.current = messages.length;
   }, [messages]);
+
+  // ---------- actions ----------
+
+  function selectChat(chat: string | null) {
+    setMobileShowChat(true);
+    setUnread((prev) => ({ ...prev, [chat ?? GLOBAL_KEY]: 0 }));
+    if (chat === activeChat) return;
+    activeChatRef.current = chat;
+    setActiveChat(chat);
+    setMessages([]);
+    lastCount.current = 0;
+    setLoading(true);
+    setText("");
+  }
 
   function handleJoin(e: FormEvent) {
     e.preventDefault();
@@ -124,16 +192,22 @@ export default function Chat() {
     localStorage.removeItem(NAME_KEY);
     setUsername(null);
     setMessages([]);
+    setConversations([]);
+    setUnread({});
+    activeChatRef.current = null;
+    setActiveChat(null);
+    setMobileShowChat(false);
   }
 
-  async function handleSend(e: FormEvent) {
-    e.preventDefault();
+  async function handleSend(e?: FormEvent) {
+    e?.preventDefault();
     const value = text.trim();
     if (!value || !username || sending) return;
     setSending(true);
     try {
-      const msg = await emitAsync<Message>("message:send", { sender: username, text: value });
-      setMessages((prev) => (prev.some((m) => m._id === msg._id) ? prev : [...prev, msg]));
+      const msg = await emitAsync<Message>("message:send", { text: value, receiver: activeChat });
+      setMessages((prev) => addUnique(prev, msg));
+      if (activeChat) setConversations((prev) => bumpConversation(prev, activeChat, msg));
       setText("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send");
@@ -142,15 +216,14 @@ export default function Chat() {
     }
   }
 
-  async function handleSaveEdit(id: string) {
-    const value = editText.trim();
-    if (!value) return;
+  async function handleEdit(id: string, value: string) {
     try {
       const updated = await emitAsync<Message>("message:edit", { id, text: value });
       setMessages((prev) => prev.map((m) => (m._id === id ? updated : m)));
-      setEditingId(null);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update");
+      return false;
     }
   }
 
@@ -160,208 +233,178 @@ export default function Chat() {
       setMessages((prev) => prev.filter((m) => m._id !== id));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete");
-    } finally {
-      setConfirmDeleteId(null);
     }
   }
 
+  // ---------- login screen ----------
+
   if (!username) {
     return (
-      <main className="flex flex-1 items-center justify-center bg-slate-100 p-4">
+      <main className="flex flex-1 items-center justify-center bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 p-4">
         <form
           onSubmit={handleJoin}
-          className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-8 shadow-lg"
+          className="w-full max-w-sm rounded-3xl bg-white/95 p-8 shadow-2xl backdrop-blur"
         >
-          <h1 className="text-2xl font-bold text-slate-800">Join the chat</h1>
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-lg">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-7 w-7">
+              <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z" strokeLinejoin="round" />
+            </svg>
+          </div>
+          <h1 className="text-center text-2xl font-bold text-slate-800">Welcome to ChatApp</h1>
+          <p className="mt-1 mb-6 text-center text-sm text-slate-500">
+            Chat with everyone, or privately one-on-one.
+          </p>
           <input
             autoFocus
             value={nameInput}
             onChange={(e) => setNameInput(e.target.value)}
-            placeholder="Your name"
+            placeholder="Pick a username"
             maxLength={30}
-            className="w-full rounded-lg border border-slate-300 px-4 py-2 text-slate-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-800 outline-none focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
           />
           <button
             type="submit"
             disabled={!nameInput.trim()}
-            className="w-full rounded-lg bg-indigo-600 py-2 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            className="mt-3 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 py-3 font-semibold text-white shadow-md transition hover:shadow-lg disabled:opacity-50"
           >
-            Enter
+            Start chatting
           </button>
         </form>
       </main>
     );
   }
 
+  // ---------- main layout ----------
+
+  const isGlobal = activeChat === null;
+
   return (
-    <main className="flex flex-1 justify-center bg-slate-100 sm:p-4">
-      <div className="flex h-dvh w-full max-w-2xl flex-col overflow-hidden bg-white shadow-lg sm:h-[calc(100dvh-2rem)] sm:rounded-2xl">
-        <header className="flex items-center justify-between border-b border-slate-200 bg-indigo-600 px-5 py-3 text-white">
-          <h1 className="text-lg font-semibold">ChatApp</h1>
-          <div className="flex items-center gap-3 text-sm">
-            <span>
-              Signed in as <strong>{username}</strong>
-            </span>
+    <main className="flex flex-1 bg-slate-200 lg:p-5">
+      <div className="mx-auto flex h-dvh w-full max-w-6xl overflow-hidden bg-white shadow-xl lg:h-[calc(100dvh-2.5rem)] lg:rounded-2xl">
+        <Sidebar
+          username={username}
+          conversations={conversations}
+          activeChat={activeChat}
+          unread={unread}
+          connected={connected}
+          onSelect={selectChat}
+          onLogout={handleLogout}
+          className={`w-full md:w-80 md:shrink-0 lg:w-96 ${mobileShowChat ? "hidden md:flex" : "flex"}`}
+        />
+
+        <section className={`min-w-0 flex-1 flex-col ${mobileShowChat ? "flex" : "hidden md:flex"}`}>
+          {/* Chat header */}
+          <header className="flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-3">
             <button
-              onClick={handleLogout}
-              className="rounded-md bg-white/20 px-2 py-1 hover:bg-white/30"
+              onClick={() => setMobileShowChat(false)}
+              className="-ml-1 rounded-full p-1.5 text-slate-500 hover:bg-slate-100 md:hidden"
+              title="Back"
             >
-              Leave
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-5 w-5">
+                <path d="m15 18-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </button>
-          </div>
-        </header>
+            {activeChat === null ? <GlobalAvatar /> : <Avatar name={activeChat} />}
+            <div className="min-w-0 flex-1">
+              <h2 className="truncate font-semibold text-slate-800">{isGlobal ? "Global chat" : activeChat}</h2>
+              <p className="truncate text-xs text-slate-500">
+                {isGlobal ? "Everyone · tap a name to message privately" : "🔒 Private chat · only you two can see this"}
+              </p>
+            </div>
+          </header>
 
-        {!connected && (
-          <div className="bg-amber-50 px-5 py-2 text-sm text-amber-700">Connecting…</div>
-        )}
-
-        {error && (
-          <div className="bg-red-50 px-5 py-2 text-sm text-red-700">{error}</div>
-        )}
-
-        <section className="flex-1 space-y-3 overflow-y-auto bg-slate-50 px-4 py-4">
-          {messages.length === 0 && (
-            <p className="mt-10 text-center text-sm text-slate-400">
-              No messages yet. Say hi!
-            </p>
+          {!connected && (
+            <div className="bg-amber-50 px-4 py-1.5 text-center text-xs font-medium text-amber-700">
+              Connecting…
+            </div>
+          )}
+          {error && (
+            <div className="flex items-center justify-between bg-red-50 px-4 py-1.5 text-xs text-red-700">
+              <span>{error}</span>
+              <button onClick={() => setError(null)} className="font-semibold hover:underline">
+                Dismiss
+              </button>
+            </div>
           )}
 
-          {messages.map((m) => {
-            const mine = m.sender === username;
-            const editing = editingId === m._id;
-            const confirming = confirmDeleteId === m._id;
-            const edited = m.updatedAt !== m.createdAt;
-            return (
-              <div key={m._id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
-                <div className={`flex max-w-[80%] flex-col ${mine ? "items-end" : "items-start"}`}>
-                  {!mine && (
-                    <p className="mb-1 ml-1 text-xs font-medium text-slate-500">{m.sender}</p>
-                  )}
-
-                  {editing ? (
-                    <div className="w-72 max-w-full rounded-2xl border-2 border-indigo-400 bg-white p-3 shadow-md">
-                      <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-indigo-600">
-                        <PencilIcon /> Editing message
-                      </p>
-                      <textarea
-                        autoFocus
-                        rows={3}
-                        value={editText}
-                        onChange={(e) => setEditText(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            handleSaveEdit(m._id);
-                          }
-                          if (e.key === "Escape") setEditingId(null);
-                        }}
-                        maxLength={1000}
-                        className="w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
-                      />
-                      <div className="mt-2 flex items-center justify-between">
-                        <span className="text-[11px] text-slate-400">Enter to save · Esc to cancel</span>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => setEditingId(null)}
-                            className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            onClick={() => handleSaveEdit(m._id)}
-                            disabled={!editText.trim() || editText.trim() === m.text}
-                            className="rounded-lg bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-                          >
-                            Save
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div
-                      className={`rounded-2xl px-4 py-2 shadow-sm ${
-                        mine
-                          ? "rounded-br-sm bg-indigo-600 text-white"
-                          : "rounded-bl-sm bg-white text-slate-800"
-                      } ${confirming ? "ring-2 ring-red-400 ring-offset-2" : ""}`}
-                    >
-                      <p className="whitespace-pre-wrap break-words">{m.text}</p>
-                    </div>
-                  )}
-
-                  <div className="mt-1 flex items-center gap-2 px-1 text-[11px] text-slate-400">
-                    <span>
-                      {formatTime(m.createdAt)}
-                      {edited && " · edited"}
-                    </span>
-
-                    {mine && !editing && !confirming && (
-                      <div className="flex gap-1">
-                        <button
-                          onClick={() => {
-                            setConfirmDeleteId(null);
-                            setEditingId(m._id);
-                            setEditText(m.text);
-                          }}
-                          title="Edit message"
-                          className="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 font-medium text-slate-600 transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600"
-                        >
-                          <PencilIcon /> Edit
-                        </button>
-                        <button
-                          onClick={() => {
-                            setEditingId(null);
-                            setConfirmDeleteId(m._id);
-                          }}
-                          title="Delete message"
-                          className="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 font-medium text-slate-600 transition hover:border-red-300 hover:bg-red-50 hover:text-red-600"
-                        >
-                          <TrashIcon /> Delete
-                        </button>
-                      </div>
-                    )}
-
-                    {confirming && (
-                      <div className="flex items-center gap-1.5 rounded-md bg-red-50 px-2 py-0.5 text-red-700">
-                        <span className="font-medium">Delete this message?</span>
-                        <button
-                          onClick={() => setConfirmDeleteId(null)}
-                          className="rounded px-1.5 py-0.5 font-medium text-slate-600 hover:bg-white"
-                        >
-                          No
-                        </button>
-                        <button
-                          onClick={() => handleDelete(m._id)}
-                          className="rounded bg-red-600 px-1.5 py-0.5 font-medium text-white hover:bg-red-700"
-                        >
-                          Yes, delete
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
+          {/* Messages */}
+          <div className="chat-bg flex-1 overflow-y-auto px-3 py-4 sm:px-6">
+            {loading && (
+              <div className="flex justify-center pt-10">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600" />
               </div>
-            );
-          })}
-          <div ref={bottomRef} />
-        </section>
+            )}
 
-        <form onSubmit={handleSend} className="flex gap-2 border-t border-slate-200 p-3">
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Type a message..."
-            maxLength={1000}
-            className="flex-1 rounded-full border border-slate-300 px-4 py-2 text-slate-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
-          />
-          <button
-            type="submit"
-            disabled={!text.trim() || sending || !connected}
-            className="rounded-full bg-indigo-600 px-5 py-2 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            Send
-          </button>
-        </form>
+            {!loading && messages.length === 0 && (
+              <div className="mx-auto mt-16 max-w-xs rounded-2xl bg-white/80 p-6 text-center shadow-sm backdrop-blur">
+                <div className="mb-3 flex justify-center">
+                  {activeChat === null ? <GlobalAvatar /> : <Avatar name={activeChat} />}
+                </div>
+                <p className="font-medium text-slate-700">
+                  {isGlobal ? "No messages yet" : `Start chatting with ${activeChat}`}
+                </p>
+                <p className="mt-1 text-sm text-slate-500">
+                  {isGlobal ? "Be the first to say hi!" : "Messages here are only visible to you two."}
+                </p>
+              </div>
+            )}
+
+            {messages.map((m, i) => {
+              const prev = messages[i - 1];
+              const newDay = !prev || !isSameDay(prev.createdAt, m.createdAt);
+              const showSender = newDay || prev.sender !== m.sender;
+              return (
+                <div key={m._id}>
+                  {newDay && (
+                    <div className="my-4 flex justify-center">
+                      <span className="rounded-full bg-white/90 px-3 py-1 text-[11px] font-medium text-slate-500 shadow-sm">
+                        {formatDay(m.createdAt)}
+                      </span>
+                    </div>
+                  )}
+                  <MessageItem
+                    message={m}
+                    mine={m.sender === username}
+                    showSender={showSender}
+                    isGlobal={isGlobal}
+                    onOpenDm={selectChat}
+                    onEdit={handleEdit}
+                    onDelete={handleDelete}
+                  />
+                </div>
+              );
+            })}
+            <div ref={bottomRef} />
+          </div>
+
+          {/* Composer */}
+          <form onSubmit={handleSend} className="flex items-end gap-2 border-t border-slate-200 bg-white px-3 py-3">
+            <textarea
+              rows={1}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              placeholder={isGlobal ? "Message everyone…" : `Message ${activeChat}…`}
+              maxLength={1000}
+              className="field-sizing-content max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-[15px] text-slate-800 outline-none focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
+            />
+            <button
+              type="submit"
+              disabled={!text.trim() || sending || !connected}
+              title="Send"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md transition hover:scale-105 disabled:scale-100 disabled:opacity-40"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5 translate-x-px">
+                <path d="M3.4 20.4 20.85 12.9a1 1 0 0 0 0-1.8L3.4 3.6a.99.99 0 0 0-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87 1l.01 4.61c0 .71.73 1.2 1.39.91Z" />
+              </svg>
+            </button>
+          </form>
+        </section>
       </div>
     </main>
   );
