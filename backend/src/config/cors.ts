@@ -3,6 +3,7 @@ import type { CorsOptions } from "cors";
 // Which websites (frontend origins) may call this API and open a socket.
 const DEFAULT_ORIGINS = [
   "http://localhost:3000", // Next.js dev server
+   "http://localhost:5000", 
   "https://chat-app-fe-beta-henna.vercel.app", // deployed frontend (Vercel)
 ];
 

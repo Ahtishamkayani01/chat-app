@@ -3,6 +3,8 @@ import { Message } from "./message.model";
 
 export interface IUser {
   username: string;
+  email: string;
+  password: string;
   lastSeen: Date;
 }
 
@@ -16,7 +18,14 @@ const userSchema = new Schema<IUser>(
       lowercase: true,
       maxLength: 30,
     },
-
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      lowercase: true,
+    },
+    password: { type: String, required: true, select: false },
     lastSeen: { type: Date, default: Date.now },
   },
   { timestamps: true },

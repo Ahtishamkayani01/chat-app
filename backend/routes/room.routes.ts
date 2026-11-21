@@ -5,9 +5,10 @@ import {
   listRoomMessages,
   postRoomMessage,
 } from "../src/controllers/room.controller";
+import { requireAuth } from "../src/middleware/auth.middleware";
 
 const router = Router();
-
+router.use(requireAuth);
 router.get("/my-rooms", getMyRooms); // sidebar list
 router.post("/direct/open", openDirectRoom); // open/create a DM
 router.get("/:roomId/messages/history", listRoomMessages); // chat history
