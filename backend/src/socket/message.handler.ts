@@ -6,7 +6,6 @@ import { Room } from "../models/room.model";
 import { sendMessage } from "../services/message.service";
 
 const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
-const uname = (v: unknown) => str(v).toLowerCase();
 //helper
 type AckResponse = { ok: true; data?: unknown } | { ok: false; error: string };
 type Ack = (res: AckResponse) => void;
@@ -45,19 +44,12 @@ async function broadcast(
 export function registerMessageHandlers(io: Server, socket: Socket) {
   console.log("handlers registering forn socket", socket.id);
 
-  // JOIN
-  socket.on("user:join", (payload, ack) =>
+  // JOIN: the user is already known from the token (see io.use in index.ts)
+  socket.on("user:join", (_payload, ack) =>
     withAck(ack, async () => {
-      const username = uname(payload?.username);
-      if (!username) throw new Error("username is required");
-      // Save the user (create if new, otherwise just update lastSeen)
-      await User.updateOne(
-        { username },
-        { $set: { lastSeen: new Date() } },
-        { upsert: true },
-      );
-      socket.data.username = username; // remember who this socket is
-      socket.join(`user:${username}`); //personal room like me with other person
+      const username = socket.data.username as string;
+      await User.updateOne({ username }, { $set: { lastSeen: new Date() } }); // no upsert
+      socket.join(`user:${username}`); // personal channel for DMs/groups
       return { username };
     }),
   );

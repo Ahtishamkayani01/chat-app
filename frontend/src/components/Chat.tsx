@@ -6,6 +6,7 @@ import { socket, emitAsync } from "@/lib/socket";
 import { formatDay, isSameDay } from "@/lib/format";
 import { getErrorMessage } from "@/lib/errors";
 import { roomTitle } from "@/lib/rooms";
+import { clearSession, expireSession, getSession, saveSession, SESSION_EXPIRED_EVENT, type Session } from "@/lib/auth";
 import { useAppDispatch } from "@/store/hooks";
 import {
   chatApi,
@@ -22,8 +23,8 @@ import {
 import { Avatar, GlobalAvatar } from "./Avatar";
 import MessageItem from "./MessageItem";
 import Sidebar from "./Sidebar";
+import AuthScreen from "./AuthScreen";
 
-const NAME_KEY = "chat-username";
 const NO_MESSAGES: Message[] = [];
 
 /** Usernames are stored lowercase on the backend. */
@@ -35,7 +36,7 @@ export default function Chat() {
   const dispatch = useAppDispatch();
 
   const [username, setUsername] = useState<string | null>(null);
-  const [nameInput, setNameInput] = useState("");
+  const [checkedSession, setCheckedSession] = useState(false); // avoid flashing the sign-in screen
 
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null); // null = global
   const activeRoomIdRef = useRef<string | null>(null); // read inside socket listeners
@@ -50,11 +51,12 @@ export default function Chat() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastCount = useRef(0);
 
-  // Restore saved name after mount (localStorage is browser-only).
+  // Restore the saved session after mount (localStorage is browser-only).
   useEffect(() => {
-    const saved = localStorage.getItem(NAME_KEY);
+    const saved = getSession();
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (saved) setUsername(normalize(saved));
+    if (saved) setUsername(normalize(saved.username));
+    setCheckedSession(true);
   }, []);
 
   // ---------- server data (RTK Query) ----------
@@ -94,7 +96,7 @@ export default function Chat() {
 
     async function onConnect() {
       try {
-        await emitAsync("user:join", { username: me }); // join my personal channel
+        await emitAsync("user:join", {}); // server knows who I am from the token
         setConnected(true);
         cacheResync(dispatch); // re-sync in case we missed messages while offline
       } catch (err) {
@@ -103,6 +105,10 @@ export default function Chat() {
     }
     function onDisconnect() {
       setConnected(false);
+    }
+    // The server refused the connection (see io.use on the backend).
+    function onConnectError(err: Error) {
+      if (/token|logged in/i.test(err.message)) expireSession();
     }
 
     function onNew(msg: Message) {
@@ -122,6 +128,7 @@ export default function Chat() {
 
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
+    socket.on("connect_error", onConnectError);
     socket.on("message:new", onNew);
     socket.on("message:updated", onUpdated);
     socket.on("message:deleted", onDeleted);
@@ -130,6 +137,7 @@ export default function Chat() {
     return () => {
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
+      socket.off("connect_error", onConnectError);
       socket.off("message:new", onNew);
       socket.off("message:updated", onUpdated);
       socket.off("message:deleted", onDeleted);
@@ -137,6 +145,16 @@ export default function Chat() {
       setConnected(false);
     };
   }, [username, dispatch]);
+
+  // Token rejected by the API or socket: drop back to the sign-in screen.
+  useEffect(() => {
+    const onExpired = () => {
+      handleLogout();
+      setError(null);
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+  });
 
   // Scroll to bottom when messages are added; jump instantly when switching rooms.
   useEffect(() => {
@@ -173,16 +191,14 @@ export default function Chat() {
     }
   }
 
-  function handleJoin(e: FormEvent) {
-    e.preventDefault();
-    const name = normalize(nameInput);
-    if (!name) return;
-    localStorage.setItem(NAME_KEY, name);
-    setUsername(name);
+  function handleAuthed(session: Session) {
+    saveSession(session);
+    setError(null);
+    setUsername(normalize(session.username));
   }
 
   function handleLogout() {
-    localStorage.removeItem(NAME_KEY);
+    clearSession();
     setUsername(null);
     setUnread({});
     activeRoomIdRef.current = null;
@@ -229,43 +245,10 @@ export default function Chat() {
     }
   }
 
-  // ---------- login screen ----------
+  // ---------- sign-in / register ----------
 
-  if (!username) {
-    return (
-      <main className="flex flex-1 items-center justify-center bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 p-4">
-        <form
-          onSubmit={handleJoin}
-          className="w-full max-w-sm rounded-3xl bg-white/95 p-8 shadow-2xl backdrop-blur"
-        >
-          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-lg">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-7 w-7">
-              <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z" strokeLinejoin="round" />
-            </svg>
-          </div>
-          <h1 className="text-center text-2xl font-bold text-slate-800">Welcome to ChatApp</h1>
-          <p className="mt-1 mb-6 text-center text-sm text-slate-500">
-            Chat with everyone, or privately one-on-one.
-          </p>
-          <input
-            autoFocus
-            value={nameInput}
-            onChange={(e) => setNameInput(e.target.value)}
-            placeholder="Pick a username"
-            maxLength={30}
-            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-800 outline-none focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
-          />
-          <button
-            type="submit"
-            disabled={!nameInput.trim()}
-            className="mt-3 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 py-3 font-semibold text-white shadow-md transition hover:shadow-lg disabled:opacity-50"
-          >
-            Start chatting
-          </button>
-        </form>
-      </main>
-    );
-  }
+  if (!checkedSession) return <main className="flex-1 bg-slate-950" />;
+  if (!username) return <AuthScreen onAuthed={handleAuthed} />;
 
   // ---------- main layout ----------
 

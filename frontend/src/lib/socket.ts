@@ -1,10 +1,14 @@
 import { io } from "socket.io-client";
 import { BACKEND_URL } from "@/config/env";
+import { getSession } from "@/lib/auth";
 
 // One shared socket for the whole app. Created outside React so re-renders
-// never open a second connection. We connect manually after the user joins.
+// never open a second connection. We connect manually once the user is signed in.
 export const socket = io(BACKEND_URL, {
   autoConnect: false,
+  // Called on every (re)connect, so it always sends the current token.
+  // The server checks it in io.use() and rejects the connection if it's invalid.
+  auth: (cb) => cb({ token: getSession()?.token ?? "" }),
 });
 
 type AckResponse<T> = { ok: true; data: T } | { ok: false; error: string };

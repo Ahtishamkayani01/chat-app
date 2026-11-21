@@ -7,10 +7,9 @@ const str = (v: unknown) =>
   String(v ?? "")
     .trim()
     .toLowerCase();
-//GET /api/rooms/my-rooms?user=ahtisham  sidebar: global room + every room I'm in
+//GET /api/rooms/my-rooms  sidebar: global room + every room I'm in
 export async function getMyRooms(req: Request, res: Response) {
-  const user = str(req.query.user);
-  if (!user) return res.status(400).json({ message: "User is required" });
+  const user = req.user!.username;
   const global = await globalRoom();
   const rooms = await Room.find({ members: user }).sort({
     "lastMessage.at": -1,
@@ -18,11 +17,11 @@ export async function getMyRooms(req: Request, res: Response) {
   res.json([global, ...rooms]);
 }
 
-//POST /api/rooms/direct/open  body: { user, with }
+//POST /api/rooms/direct/open  body: { with }
 export async function openDirectRoom(req: Request, res: Response) {
   try {
     const room = await getOrCreateDirectRoom(
-      str(req.body.user),
+      req.user!.username,
       str(req.body.with),
     );
     res.json(room);
@@ -31,12 +30,12 @@ export async function openDirectRoom(req: Request, res: Response) {
   }
 }
 
-//GET /api/rooms/:roomId/messages/history?user=ahtisham  (chat history)
+//GET /api/rooms/:roomId/messages/history  (chat history)
 export async function listRoomMessages(req: Request, res: Response) {
   try {
     const messages = await getRoomMessages(
       String(req.params.roomId),
-      str(req.query.user),
+      req.user!.username,
     );
     res.json(messages);
   } catch (err) {
@@ -44,12 +43,12 @@ export async function listRoomMessages(req: Request, res: Response) {
   }
 }
 
-//POST /api/rooms/:roomId/messages/send  body: { sender, text }
+//POST /api/rooms/:roomId/messages/send  body: { text }
 export async function postRoomMessage(req: Request, res: Response) {
   try {
     const { message } = await sendMessage(
       String(req.params.roomId),
-      str(req.body.sender),
+      req.user!.username,
       String(req.body.text ?? ""),
     );
     res.status(201).json(message);

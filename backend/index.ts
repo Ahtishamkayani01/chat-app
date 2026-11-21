@@ -9,6 +9,7 @@ import { connectDB } from "./src/config/db";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { registerMessageHandlers } from "./src/socket/message.handler";
+import { verifyToken } from "./src/utils/token";
 
 const app = express();
 
@@ -40,6 +41,18 @@ if (!process.env.VERCEL) {
       methods: ["GET", "POST"],
       credentials: true,
     },
+  });
+
+  // Runs once per connection: reject sockets without a valid token
+  io.use((socket, next) => {
+    const token = socket.handshake.auth?.token;
+    if (!token) return next(new Error("Not logged in"));
+    try {
+      socket.data.username = verifyToken(token).username; // who this socket is
+      next();
+    } catch {
+      next(new Error("Invalid or expired token"));
+    }
   });
 
   // Every time a client connects, attach the message handlers to it
