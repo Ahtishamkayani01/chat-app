@@ -1,19 +1,20 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { api, type Conversation } from "@/lib/api";
+import type { Room } from "@/types/chat";
 import { formatShort } from "@/lib/format";
+import { getErrorMessage } from "@/lib/errors";
+import { byLatestActivity, roomTitle } from "@/lib/rooms";
 import { Avatar, GlobalAvatar } from "./Avatar";
-
-export const GLOBAL_KEY = "#global";
 
 type Props = {
   username: string;
-  conversations: Conversation[];
-  activeChat: string | null;
-  unread: Record<string, number>;
+  rooms: Room[]; // from GET /rooms/my-rooms (global + mine)
+  activeRoomId: string | null;
+  unread: Record<string, number>; // keyed by roomId
   connected: boolean;
-  onSelect: (chat: string | null) => void;
+  onSelectRoom: (roomId: string) => void;
+  onStartDm: (username: string) => Promise<void>; // throws if the user doesn't exist
   onLogout: () => void;
   className?: string;
 };
@@ -29,11 +30,12 @@ function UnreadBadge({ count }: { count?: number }) {
 
 export default function Sidebar({
   username,
-  conversations,
-  activeChat,
+  rooms,
+  activeRoomId,
   unread,
   connected,
-  onSelect,
+  onSelectRoom,
+  onStartDm,
   onLogout,
   className = "",
 }: Props) {
@@ -43,33 +45,31 @@ export default function Sidebar({
   const [newChatError, setNewChatError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
 
-  // If I opened a DM with someone new (no messages yet), still show it in the list.
-  const list =
-    activeChat && !conversations.some((c) => c.with === activeChat)
-      ? [{ with: activeChat, lastMessage: null }, ...conversations]
-      : conversations;
+  const globalRoom = rooms.find((r) => r.type === "global");
+  const privateRooms = rooms.filter((r) => r.type !== "global").sort(byLatestActivity);
 
   const term = search.trim().toLowerCase();
-  const filtered = term ? list.filter((c) => c.with.toLowerCase().includes(term)) : list;
+  const filtered = term
+    ? privateRooms.filter((r) => roomTitle(r, username).toLowerCase().includes(term))
+    : privateRooms;
 
   async function startChat(e: FormEvent) {
     e.preventDefault();
-    const name = newChatName.trim();
+    const name = newChatName.trim().toLowerCase();
     if (!name || checking) return;
     if (name === username) return setNewChatError("That's you!");
 
-    // Ask the backend if this user exists before opening a chat
+    // The backend checks the user exists, then opens (or creates) the DM room
     setChecking(true);
     try {
-      await api.getUser(name);
+      await onStartDm(name);
     } catch (err) {
-      setNewChatError(err instanceof Error ? err.message : "Could not check user");
+      setNewChatError(getErrorMessage(err, "Could not start chat"));
       return;
     } finally {
       setChecking(false);
     }
 
-    onSelect(name);
     setNewChatName("");
     setNewChatError(null);
     setNewChatOpen(false);
@@ -167,14 +167,14 @@ export default function Sidebar({
 
       <nav className="flex-1 overflow-y-auto pb-2">
         {/* Global chat, always pinned on top */}
-        {(!term || "global chat".includes(term)) && (
+        {globalRoom && (!term || "global chat".includes(term)) && (
           <ChatRow
-            active={activeChat === null}
-            onClick={() => onSelect(null)}
+            active={activeRoomId === globalRoom._id}
+            onClick={() => onSelectRoom(globalRoom._id)}
             avatar={<GlobalAvatar />}
             title="Global chat"
             subtitle="Everyone in the room"
-            unread={unread[GLOBAL_KEY]}
+            unread={unread[globalRoom._id]}
           />
         )}
 
@@ -188,19 +188,20 @@ export default function Sidebar({
           </p>
         )}
 
-        {filtered.map((c) => {
-          const last = c.lastMessage;
+        {filtered.map((room) => {
+          const title = roomTitle(room, username);
+          const last = room.lastMessage;
           const preview = last ? (last.sender === username ? `You: ${last.text}` : last.text) : "Say hi 👋";
           return (
             <ChatRow
-              key={c.with}
-              active={activeChat === c.with}
-              onClick={() => onSelect(c.with)}
-              avatar={<Avatar name={c.with} />}
-              title={c.with}
+              key={room._id}
+              active={activeRoomId === room._id}
+              onClick={() => onSelectRoom(room._id)}
+              avatar={<Avatar name={title} />}
+              title={title}
               subtitle={preview}
-              time={last ? formatShort(last.createdAt) : undefined}
-              unread={unread[c.with]}
+              time={last ? formatShort(last.at) : undefined}
+              unread={unread[room._id]}
             />
           );
         })}

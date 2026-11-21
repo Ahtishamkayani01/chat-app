@@ -1,10 +1,12 @@
 import { Server, Socket } from "socket.io";
 import { Message } from "../models/message.model";
-import { User, userExists } from "../models/user.model";
-import { isValidObjectId } from "mongoose";
+import { User } from "../models/user.model";
+import { isValidObjectId, Types } from "mongoose";
+import { Room } from "../models/room.model";
+import { sendMessage } from "../services/message.service";
 
 const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
-
+const uname = (v: unknown) => str(v).toLowerCase();
 //helper
 type AckResponse = { ok: true; data?: unknown } | { ok: false; error: string };
 type Ack = (res: AckResponse) => void;
@@ -24,26 +26,29 @@ async function withAck(ack: unknown, fn: () => Promise<unknown>) {
   }
 }
 
-function broadcast(
+async function broadcast(
   io: Server,
-  msg: { sender: string; receiver?: string | null },
+  roomId: Types.ObjectId | string,
   event: string,
   data: unknown,
 ) {
-  if (msg.receiver) {
-    io.to(msg.sender).to(msg.receiver).emit(event, data); // only the 2 people
+  const room = await Room.findById(roomId);
+  if (!room) return;
+  if (room.type === "global") {
+    io.emit(event, data);
   } else {
-    io.emit(event, data); // everyone
+    const channels = room.members.map((m) => `user:${m}`);
+    io.to(channels).emit(event, data);
   }
 }
 
 export function registerMessageHandlers(io: Server, socket: Socket) {
   console.log("handlers registering forn socket", socket.id);
 
-  // JOIN: put this socket in a room named after the user
+  // JOIN
   socket.on("user:join", (payload, ack) =>
     withAck(ack, async () => {
-      const username = str(payload?.username);
+      const username = uname(payload?.username);
       if (!username) throw new Error("username is required");
       // Save the user (create if new, otherwise just update lastSeen)
       await User.updateOne(
@@ -52,7 +57,7 @@ export function registerMessageHandlers(io: Server, socket: Socket) {
         { upsert: true },
       );
       socket.data.username = username; // remember who this socket is
-      socket.join(username); //personal roon like me with other person
+      socket.join(`user:${username}`); //personal room like me with other person
       return { username };
     }),
   );
@@ -63,19 +68,17 @@ export function registerMessageHandlers(io: Server, socket: Socket) {
       console.log("[send] received:", payload);
 
       const sender = socket.data.username;
-      const receiver = str(payload?.receiver) || null;
-      const text = str(payload?.text);
-
       if (!sender) throw new Error("Join first");
-      if (!text) throw new Error("text is required");
-      if (receiver === sender) throw new Error("can't DM yourself");
-      if (receiver && !(await userExists(receiver)))
-        throw new Error(`User "${receiver}" does not exist`);
 
-      const message = await Message.create({ sender, receiver, text });
+      // payload: { roomId, text }. sendMessage validates text + room membership
+      const { message, room } = await sendMessage(
+        str(payload?.roomId),
+        sender,
+        str(payload?.text),
+      );
+
       const data = message.toJSON();
-      broadcast(io, data, "message:new", data);
-      // io.emit("message:new", data); // this is for single
+      await broadcast(io, room._id, "message:new", data);
       console.log("[send] broadcast message:new", data._id);
 
       return data; // withAck sends this back as { ok: true, data }
@@ -104,8 +107,7 @@ export function registerMessageHandlers(io: Server, socket: Socket) {
       ); // return the UPDATED doc);
       if (!message) throw new Error("Message not found");
       const data = message.toJSON();
-      // io.emit("message:updated", data);
-      broadcast(io, data, "message:updated", data);
+      await broadcast(io, message.room, "message:updated", data);
 
       console.log("[edit] broadcast message:updated", id);
       return data; // withAck sends this back as { ok: true, data }
@@ -127,11 +129,11 @@ export function registerMessageHandlers(io: Server, socket: Socket) {
 
       await Message.findByIdAndDelete(id);
 
-      // io.emit("message:deleted", { id });
-      broadcast(io, existing, "message:deleted", { id });
+      const result = { id, roomId: String(existing.room) }; // client needs roomId to update the right chat
+      await broadcast(io, existing.room, "message:deleted", result);
       console.log("[delete] broadcast message:deleted", id);
 
-      return { id };
+      return result;
     }),
   );
 }

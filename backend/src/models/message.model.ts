@@ -1,18 +1,20 @@
-import { Schema, model } from "mongoose";
+import { Schema, model, Types } from "mongoose";
 
 export interface Imessage {
+  room: Types.ObjectId;
   sender: string;
-  receiver?: string | null;
   text: string;
 }
 
 const messageSchema = new Schema<Imessage>(
   {
+    room: { type: Schema.Types.ObjectId, ref: "Room", required: true },
     sender: { type: String, required: true, trim: true },
-    receiver: { type: String, default: null, trim: true },
     text: { type: String, required: true, trim: true, maxLength: 1000 },
   },
   { timestamps: true },
 );
-messageSchema.index({ sender: 1, receiver: 1, createdAt: 1 });
+
+messageSchema.index({ room: 1, createdAt: 1 }); 
+
 export const Message = model<Imessage>("Message", messageSchema);

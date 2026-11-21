@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Message } from "@/lib/api";
+import type { Message } from "@/types/chat";
 import { formatTime } from "@/lib/format";
 import { Avatar } from "./Avatar";
 

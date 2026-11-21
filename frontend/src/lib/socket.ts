@@ -1,8 +1,9 @@
 import { io } from "socket.io-client";
+import { BACKEND_URL } from "@/config/env";
 
 // One shared socket for the whole app. Created outside React so re-renders
 // never open a second connection. We connect manually after the user joins.
-export const socket = io(process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:5000", {
+export const socket = io(BACKEND_URL, {
   autoConnect: false,
 });
 

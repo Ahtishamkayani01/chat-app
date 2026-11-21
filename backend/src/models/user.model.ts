@@ -8,7 +8,15 @@ export interface IUser {
 
 const userSchema = new Schema<IUser>(
   {
-    username: { type: String, required: true, unique: true, trim: true, maxLength: 30 },
+    username: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      lowercase: true,
+      maxLength: 30,
+    },
+
     lastSeen: { type: Date, default: Date.now },
   },
   { timestamps: true },

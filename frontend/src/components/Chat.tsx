@@ -1,114 +1,104 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { api, type Conversation, type Message } from "@/lib/api";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import type { Message } from "@/types/chat";
 import { socket, emitAsync } from "@/lib/socket";
 import { formatDay, isSameDay } from "@/lib/format";
+import { getErrorMessage } from "@/lib/errors";
+import { roomTitle } from "@/lib/rooms";
+import { useAppDispatch } from "@/store/hooks";
+import {
+  chatApi,
+  useGetMyRoomsQuery,
+  useGetRoomMessagesQuery,
+  useOpenDirectRoomMutation,
+} from "@/store/api/chatApi";
+import {
+  cacheAddMessage,
+  cacheRemoveMessage,
+  cacheReplaceMessage,
+  cacheResync,
+} from "@/store/api/chatCache";
 import { Avatar, GlobalAvatar } from "./Avatar";
 import MessageItem from "./MessageItem";
-import Sidebar, { GLOBAL_KEY } from "./Sidebar";
+import Sidebar from "./Sidebar";
 
 const NAME_KEY = "chat-username";
+const NO_MESSAGES: Message[] = [];
 
-// ---------- helpers ----------
-
-/** Which chat does this message belong to, from my point of view? null = global. */
-function chatOf(m: Message, me: string): string | null {
-  if (!m.receiver) return null;
-  return m.sender === me ? m.receiver : m.sender;
-}
-
-function addUnique(list: Message[], msg: Message) {
-  return list.some((m) => m._id === msg._id) ? list : [...list, msg];
-}
-
-/** Put this conversation at the top with its newest message. */
-function bumpConversation(list: Conversation[], other: string, msg: Message) {
-  const current = list.find((c) => c.with === other);
-  if (current && new Date(current.lastMessage.createdAt) > new Date(msg.createdAt)) return list;
-  return [{ with: other, lastMessage: msg }, ...list.filter((c) => c.with !== other)];
-}
+/** Usernames are stored lowercase on the backend. */
+const normalize = (name: string) => name.trim().toLowerCase();
 
 // ---------- component ----------
 
 export default function Chat() {
+  const dispatch = useAppDispatch();
+
   const [username, setUsername] = useState<string | null>(null);
   const [nameInput, setNameInput] = useState("");
 
-  const [activeChat, setActiveChat] = useState<string | null>(null); // null = global
-  const activeChatRef = useRef<string | null>(null); // read inside socket listeners
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null); // null = global
+  const activeRoomIdRef = useRef<string | null>(null); // read inside socket listeners
   const [mobileShowChat, setMobileShowChat] = useState(false);
-
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const conversationsRef = useRef<Conversation[]>([]); // read inside socket listeners
-  const [unread, setUnread] = useState<Record<string, number>>({});
-  const [loading, setLoading] = useState(true);
+  const [unread, setUnread] = useState<Record<string, number>>({}); // keyed by roomId
 
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false); // true once connected AND joined
-  const [syncKey, setSyncKey] = useState(0); // bump to reload history (e.g. after reconnect)
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastCount = useRef(0);
-
-  useEffect(() => {
-    conversationsRef.current = conversations;
-  }, [conversations]);
 
   // Restore saved name after mount (localStorage is browser-only).
   useEffect(() => {
     const saved = localStorage.getItem(NAME_KEY);
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (saved) setUsername(saved);
+    if (saved) setUsername(normalize(saved));
   }, []);
 
-  const refreshConversations = useCallback(async () => {
-    if (!username) return;
-    try {
-      setConversations(await api.conversations(username));
-    } catch {
-      /* sidebar is non-critical */
-    }
-  }, [username]);
+  // ---------- server data (RTK Query) ----------
 
-  // Load history for the open chat (global or DM). Re-runs when chat changes or after reconnect.
+  const { data: rooms = [], error: roomsError } = useGetMyRoomsQuery(username ?? "", {
+    skip: !username,
+  });
+  const globalRoom = rooms.find((r) => r.type === "global");
+  const activeRoomId = selectedRoomId ?? globalRoom?._id ?? null;
+  const activeRoom = rooms.find((r) => r._id === activeRoomId);
+
+  const {
+    currentData: history,
+    isFetching,
+    error: historyError,
+  } = useGetRoomMessagesQuery(
+    { roomId: activeRoomId ?? "", user: username ?? "" },
+    { skip: !username || !activeRoomId },
+  );
+  const messages = history ?? NO_MESSAGES;
+  const loading = !history && (isFetching || !activeRoomId) && !roomsError;
+
+  const [openDirectRoom] = useOpenDirectRoomMutation();
+
+  const fetchError = roomsError ?? historyError;
+  const shownError = error ?? (fetchError ? getErrorMessage(fetchError, "Failed to load") : null);
+
   useEffect(() => {
-    if (!username) return;
-    let cancelled = false; // ignore late responses if the user switched chats meanwhile
-    (async () => {
-      try {
-        const data = activeChat ? await api.dm(username, activeChat) : await api.list();
-        if (!cancelled) {
-          setMessages(data);
-          setError(null);
-        }
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load messages");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [username, activeChat, syncKey]);
+    activeRoomIdRef.current = activeRoomId;
+  }, [activeRoomId]);
 
-  // Real-time connection.
+  // ---------- real-time connection ----------
+
   useEffect(() => {
     if (!username) return;
     const me = username;
 
     async function onConnect() {
       try {
-        await emitAsync("user:join", { username: me }); // join my personal room
+        await emitAsync("user:join", { username: me }); // join my personal channel
         setConnected(true);
-        setSyncKey((k) => k + 1); // re-sync history in case we missed messages
-        refreshConversations();
+        cacheResync(dispatch); // re-sync in case we missed messages while offline
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to join");
+        setError(getErrorMessage(err, "Failed to join"));
       }
     }
     function onDisconnect() {
@@ -116,28 +106,18 @@ export default function Chat() {
     }
 
     function onNew(msg: Message) {
-      const chat = chatOf(msg, me);
-      if (chat) setConversations((prev) => bumpConversation(prev, chat, msg));
-
-      if (chat === activeChatRef.current) {
-        setMessages((prev) => addUnique(prev, msg));
-      } else if (msg.sender !== me) {
-        const key = chat ?? GLOBAL_KEY;
-        setUnread((prev) => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
+      cacheAddMessage(dispatch, me, msg);
+      if (msg.room !== activeRoomIdRef.current && msg.sender !== me) {
+        setUnread((prev) => ({ ...prev, [msg.room]: (prev[msg.room] || 0) + 1 }));
       }
     }
 
     function onUpdated(msg: Message) {
-      setMessages((prev) => prev.map((m) => (m._id === msg._id ? msg : m)));
-      setConversations((prev) =>
-        prev.map((c) => (c.lastMessage._id === msg._id ? { ...c, lastMessage: msg } : c)),
-      );
+      cacheReplaceMessage(dispatch, me, msg);
     }
 
-    function onDeleted({ id }: { id: string }) {
-      setMessages((prev) => prev.filter((m) => m._id !== id));
-      // If the sidebar preview was this message, fetch the new latest one.
-      if (conversationsRef.current.some((c) => c.lastMessage._id === id)) refreshConversations();
+    function onDeleted({ id, roomId }: { id: string; roomId: string }) {
+      cacheRemoveMessage(dispatch, me, roomId, id);
     }
 
     socket.on("connect", onConnect);
@@ -156,9 +136,9 @@ export default function Chat() {
       socket.disconnect();
       setConnected(false);
     };
-  }, [username, refreshConversations]);
+  }, [username, dispatch]);
 
-  // Scroll to bottom when messages are added; jump instantly when switching chats.
+  // Scroll to bottom when messages are added; jump instantly when switching rooms.
   useEffect(() => {
     if (messages.length > lastCount.current) {
       bottomRef.current?.scrollIntoView({ behavior: lastCount.current === 0 ? "auto" : "smooth" });
@@ -168,21 +148,34 @@ export default function Chat() {
 
   // ---------- actions ----------
 
-  function selectChat(chat: string | null) {
+  function selectRoom(roomId: string) {
     setMobileShowChat(true);
-    setUnread((prev) => ({ ...prev, [chat ?? GLOBAL_KEY]: 0 }));
-    if (chat === activeChat) return;
-    activeChatRef.current = chat;
-    setActiveChat(chat);
-    setMessages([]);
+    setUnread((prev) => ({ ...prev, [roomId]: 0 }));
+    if (roomId === activeRoomId) return;
+    activeRoomIdRef.current = roomId;
+    setSelectedRoomId(roomId);
     lastCount.current = 0;
-    setLoading(true);
     setText("");
+  }
+
+  /** Open (or create) a DM with `other` and switch to it. Throws on failure. */
+  async function startDm(other: string) {
+    if (!username) return;
+    const room = await openDirectRoom({ user: username, with: normalize(other) }).unwrap();
+    selectRoom(room._id);
+  }
+
+  async function openDmFromMessage(other: string) {
+    try {
+      await startDm(other);
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not open chat"));
+    }
   }
 
   function handleJoin(e: FormEvent) {
     e.preventDefault();
-    const name = nameInput.trim();
+    const name = normalize(nameInput);
     if (!name) return;
     localStorage.setItem(NAME_KEY, name);
     setUsername(name);
@@ -191,48 +184,48 @@ export default function Chat() {
   function handleLogout() {
     localStorage.removeItem(NAME_KEY);
     setUsername(null);
-    setMessages([]);
-    setConversations([]);
     setUnread({});
-    activeChatRef.current = null;
-    setActiveChat(null);
+    activeRoomIdRef.current = null;
+    setSelectedRoomId(null);
     setMobileShowChat(false);
+    dispatch(chatApi.util.resetApiState()); // drop the previous user's cached data
   }
 
   async function handleSend(e?: FormEvent) {
     e?.preventDefault();
     const value = text.trim();
-    if (!value || !username || sending) return;
+    if (!value || !username || !activeRoomId || sending) return;
     setSending(true);
     try {
-      const msg = await emitAsync<Message>("message:send", { text: value, receiver: activeChat });
-      setMessages((prev) => addUnique(prev, msg));
-      if (activeChat) setConversations((prev) => bumpConversation(prev, activeChat, msg));
+      const msg = await emitAsync<Message>("message:send", { roomId: activeRoomId, text: value });
+      cacheAddMessage(dispatch, username, msg);
       setText("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to send");
+      setError(getErrorMessage(err, "Failed to send"));
     } finally {
       setSending(false);
     }
   }
 
   async function handleEdit(id: string, value: string) {
+    if (!username) return false;
     try {
       const updated = await emitAsync<Message>("message:edit", { id, text: value });
-      setMessages((prev) => prev.map((m) => (m._id === id ? updated : m)));
+      cacheReplaceMessage(dispatch, username, updated);
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update");
+      setError(getErrorMessage(err, "Failed to update"));
       return false;
     }
   }
 
   async function handleDelete(id: string) {
+    if (!username) return;
     try {
-      await emitAsync("message:delete", { id });
-      setMessages((prev) => prev.filter((m) => m._id !== id));
+      const { roomId } = await emitAsync<{ id: string; roomId: string }>("message:delete", { id });
+      cacheRemoveMessage(dispatch, username, roomId, id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete");
+      setError(getErrorMessage(err, "Failed to delete"));
     }
   }
 
@@ -276,18 +269,20 @@ export default function Chat() {
 
   // ---------- main layout ----------
 
-  const isGlobal = activeChat === null;
+  const isGlobal = !activeRoom || activeRoom.type === "global";
+  const title = activeRoom ? roomTitle(activeRoom, username) : "Global chat";
 
   return (
     <main className="flex flex-1 bg-slate-200 lg:p-5">
       <div className="mx-auto flex h-dvh w-full max-w-6xl overflow-hidden bg-white shadow-xl lg:h-[calc(100dvh-2.5rem)] lg:rounded-2xl">
         <Sidebar
           username={username}
-          conversations={conversations}
-          activeChat={activeChat}
+          rooms={rooms}
+          activeRoomId={activeRoomId}
           unread={unread}
           connected={connected}
-          onSelect={selectChat}
+          onSelectRoom={selectRoom}
+          onStartDm={startDm}
           onLogout={handleLogout}
           className={`w-full md:w-80 md:shrink-0 lg:w-96 ${mobileShowChat ? "hidden md:flex" : "flex"}`}
         />
@@ -304,9 +299,9 @@ export default function Chat() {
                 <path d="m15 18-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </button>
-            {activeChat === null ? <GlobalAvatar /> : <Avatar name={activeChat} />}
+            {isGlobal ? <GlobalAvatar /> : <Avatar name={title} />}
             <div className="min-w-0 flex-1">
-              <h2 className="truncate font-semibold text-slate-800">{isGlobal ? "Global chat" : activeChat}</h2>
+              <h2 className="truncate font-semibold text-slate-800">{title}</h2>
               <p className="truncate text-xs text-slate-500">
                 {isGlobal ? "Everyone · tap a name to message privately" : "🔒 Private chat · only you two can see this"}
               </p>
@@ -318,9 +313,9 @@ export default function Chat() {
               Connecting…
             </div>
           )}
-          {error && (
+          {shownError && (
             <div className="flex items-center justify-between bg-red-50 px-4 py-1.5 text-xs text-red-700">
-              <span>{error}</span>
+              <span>{shownError}</span>
               <button onClick={() => setError(null)} className="font-semibold hover:underline">
                 Dismiss
               </button>
@@ -338,10 +333,10 @@ export default function Chat() {
             {!loading && messages.length === 0 && (
               <div className="mx-auto mt-16 max-w-xs rounded-2xl bg-white/80 p-6 text-center shadow-sm backdrop-blur">
                 <div className="mb-3 flex justify-center">
-                  {activeChat === null ? <GlobalAvatar /> : <Avatar name={activeChat} />}
+                  {isGlobal ? <GlobalAvatar /> : <Avatar name={title} />}
                 </div>
                 <p className="font-medium text-slate-700">
-                  {isGlobal ? "No messages yet" : `Start chatting with ${activeChat}`}
+                  {isGlobal ? "No messages yet" : `Start chatting with ${title}`}
                 </p>
                 <p className="mt-1 text-sm text-slate-500">
                   {isGlobal ? "Be the first to say hi!" : "Messages here are only visible to you two."}
@@ -367,7 +362,7 @@ export default function Chat() {
                     mine={m.sender === username}
                     showSender={showSender}
                     isGlobal={isGlobal}
-                    onOpenDm={selectChat}
+                    onOpenDm={(name) => void openDmFromMessage(name)}
                     onEdit={handleEdit}
                     onDelete={handleDelete}
                   />
@@ -389,13 +384,13 @@ export default function Chat() {
                   handleSend();
                 }
               }}
-              placeholder={isGlobal ? "Message everyone…" : `Message ${activeChat}…`}
+              placeholder={isGlobal ? "Message everyone…" : `Message ${title}…`}
               maxLength={1000}
               className="field-sizing-content max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-[15px] text-slate-800 outline-none focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
             />
             <button
               type="submit"
-              disabled={!text.trim() || sending || !connected}
+              disabled={!text.trim() || sending || !connected || !activeRoomId}
               title="Send"
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md transition hover:scale-105 disabled:scale-100 disabled:opacity-40"
             >
