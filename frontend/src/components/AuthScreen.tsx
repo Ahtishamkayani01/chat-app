@@ -287,7 +287,7 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (session: Session) 
                   icon="user"
                   autoFocus
                   autoComplete="username"
-                  placeholder="e.g. ahtisham"
+                  placeholder="Username"
                   maxLength={30}
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
@@ -311,7 +311,7 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (session: Session) 
                 icon="user"
                 autoFocus
                 autoComplete="username"
-                placeholder="ahtisham or you@example.com"
+                placeholder="Username or email"
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
               />
