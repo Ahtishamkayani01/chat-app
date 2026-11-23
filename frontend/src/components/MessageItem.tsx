@@ -96,7 +96,7 @@ export default function MessageItem({
 }: Props) {
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
-  const [menuOpen, setMenuOpen] = useState(false); // Edit/Delete menu (tap on mobile)
+  const [menuOpen, setMenuOpen] = useState(false); // Edit/Delete menu (long-press on mobile, right-click on desktop)
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState<DeleteScope | null>(null);
   const [canDeleteForEveryone, setCanDeleteForEveryone] = useState(false);
@@ -119,13 +119,61 @@ export default function MessageItem({
     return () => document.removeEventListener("pointerdown", onDown);
   }, [menuOpen]);
 
-  // Tap a bubble to show its actions. Phones have no hover, so this is how
-  // mobile users reach Edit/Delete. Taps on links, players and buttons are ignored.
-  function onBubbleClick(e: React.MouseEvent) {
-    if (confirming) return; // anyone can open the menu: "delete for me" works on every message
-    if ((e.target as HTMLElement).closest("a, button, video, audio, [data-interactive]")) return;
-    if (window.getSelection()?.toString()) return; // user is selecting text
-    setMenuOpen((open) => !open);
+  // Press and hold a bubble (~0.45s) to show its actions, like WhatsApp.
+  // A normal tap does nothing. Desktop: right-click, or the hover buttons.
+  const pressTimer = useRef<number | null>(null);
+  const pressStart = useRef<{ x: number; y: number } | null>(null);
+  const longPressed = useRef(false); // stops the click that follows a long press
+
+  // Message removed mid-press: don't fire the timer afterwards
+  useEffect(() => {
+    const timer = pressTimer;
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, []);
+
+  const isInteractive = (target: EventTarget) =>
+    !!(target as HTMLElement).closest("a, button, video, audio, [data-interactive]");
+
+  function cancelPress() {
+    if (pressTimer.current) clearTimeout(pressTimer.current);
+    pressTimer.current = null;
+  }
+
+  function onPressStart(e: React.PointerEvent) {
+    if (confirming || isInteractive(e.target)) return; // links, players, buttons work as normal
+    if (e.pointerType === "mouse" && e.button !== 0) return; // only the main mouse button
+    longPressed.current = false;
+    pressStart.current = { x: e.clientX, y: e.clientY };
+    cancelPress();
+    pressTimer.current = window.setTimeout(() => {
+      longPressed.current = true;
+      navigator.vibrate?.(15); // small buzz on Android (iPhones ignore it)
+      setMenuOpen(true);
+    }, 450);
+  }
+
+  // The finger moved: the user is scrolling, not holding
+  function onPressMove(e: React.PointerEvent) {
+    const s = pressStart.current;
+    if (s && Math.hypot(e.clientX - s.x, e.clientY - s.y) > 10) cancelPress();
+  }
+
+  // Right-click on desktop (and the browser's own long-press menu on Android)
+  function onContextMenu(e: React.MouseEvent) {
+    if (isInteractive(e.target)) return;
+    e.preventDefault(); // no browser "copy / search" menu
+    if (!confirming) setMenuOpen(true);
+  }
+
+  // A tap while the menu is open closes it; any other tap does nothing
+  function onBubbleClick() {
+    if (longPressed.current) {
+      longPressed.current = false; // this click is just the finger lifting
+      return;
+    }
+    if (menuOpen) setMenuOpen(false);
   }
 
   function startEdit() {
@@ -270,9 +318,15 @@ export default function MessageItem({
 
             <div
               onClick={onBubbleClick}
+              onPointerDown={onPressStart}
+              onPointerMove={onPressMove}
+              onPointerUp={cancelPress}
+              onPointerLeave={cancelPress}
+              onPointerCancel={cancelPress}
+              onContextMenu={onContextMenu}
               className={`relative rounded-xl transition ${
                 a ? (isMedia ? "p-1" : "p-2") : "px-3.5 py-2"
-              } cursor-pointer ${
+              } pointer-coarse:select-none [-webkit-touch-callout:none] ${
                 deleted
                   ? mine
                     ? "bg-accent-50 text-accent-400 ring-1 ring-accent-100"
