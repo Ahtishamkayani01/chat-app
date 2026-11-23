@@ -5,7 +5,7 @@ import {
   type FetchArgs,
   type FetchBaseQueryError,
 } from "@reduxjs/toolkit/query/react";
-import type { Message, Room } from "@/types/chat";
+import type { Attachment, Message, Room } from "@/types/chat";
 import { API_BASE_URL } from "@/config/env";
 import { expireSession, getSession, type Session } from "@/lib/auth";
 
@@ -94,11 +94,14 @@ export const chatApi = createApi({
 
     // POST /rooms/:roomId/messages/send
     // (REST alternative; the UI sends over the socket so others get it in real time)
-    sendRoomMessage: build.mutation<Message, { roomId: string; text: string }>({
-      query: ({ roomId, text }) => ({
+    sendRoomMessage: build.mutation<
+      Message,
+      { roomId: string; text?: string; attachment?: Attachment }
+    >({
+      query: ({ roomId, text, attachment }) => ({
         url: `rooms/${roomId}/messages/send`,
         method: "POST",
-        body: { text },
+        body: { text: text ?? "", attachment },
       }),
       invalidatesTags: (_res, _err, { roomId }) => [{ type: "Messages", id: roomId }, "Rooms"],
     }),
@@ -131,6 +134,20 @@ export const chatApi = createApi({
       }),
       invalidatesTags: (_res, _err, { roomId }) => [{ type: "Messages", id: roomId }],
     }),
+
+    // ---------- Uploads ----------
+
+    // POST /uploads/attachment  form-data: file  → Attachment (Cloudinary info)
+    // Sending a file is 2 steps: upload it here, then send the returned
+    // object with socket "message:send" so everyone gets it in real time.
+    uploadAttachment: build.mutation<Attachment, File>({
+      query: (file) => {
+        const form = new FormData();
+        form.append("file", file); // must be "file", same as multer's .single("file")
+        // No Content-Type header: the browser sets multipart/form-data + boundary itself
+        return { url: "uploads/attachment", method: "POST", body: form };
+      },
+    }),
   }),
 });
 
@@ -146,4 +163,5 @@ export const {
   useGetMessageDetailsQuery,
   useEditMessageMutation,
   useDeleteMessageMutation,
+  useUploadAttachmentMutation,
 } = chatApi;

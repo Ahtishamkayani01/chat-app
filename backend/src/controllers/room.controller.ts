@@ -50,6 +50,7 @@ export async function postRoomMessage(req: Request, res: Response) {
       String(req.params.roomId),
       req.user!.username,
       String(req.body.text ?? ""),
+      req.body.attachment,
     );
     res.status(201).json(message);
   } catch (err) {

@@ -3,7 +3,8 @@ import { Message } from "../models/message.model";
 import { User } from "../models/user.model";
 import { isValidObjectId, Types } from "mongoose";
 import { Room } from "../models/room.model";
-import { sendMessage } from "../services/message.service";
+import { refreshLastMessage, sendMessage } from "../services/message.service";
+import { deleteAttachmentFile } from "../services/upload.service";
 
 const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 //helper
@@ -62,11 +63,12 @@ export function registerMessageHandlers(io: Server, socket: Socket) {
       const sender = socket.data.username;
       if (!sender) throw new Error("Join first");
 
-      // payload: { roomId, text }. sendMessage validates text + room membership
+      // payload: { roomId, text?, attachment? }
       const { message, room } = await sendMessage(
         str(payload?.roomId),
         sender,
         str(payload?.text),
+        payload?.attachment,
       );
 
       const data = message.toJSON();
@@ -98,6 +100,7 @@ export function registerMessageHandlers(io: Server, socket: Socket) {
         { returnDocument: "after", runValidators: true },
       ); // return the UPDATED doc);
       if (!message) throw new Error("Message not found");
+      await refreshLastMessage(message.room); // in case it was the newest message
       const data = message.toJSON();
       await broadcast(io, message.room, "message:updated", data);
 
@@ -120,8 +123,13 @@ export function registerMessageHandlers(io: Server, socket: Socket) {
         throw new Error("Not your message");
 
       await Message.findByIdAndDelete(id);
+      if (existing.attachment) {
+        await deleteAttachmentFile(existing.attachment);
+      }
 
-      const result = { id, roomId: String(existing.room) }; // client needs roomId to update the right chat
+      const lastMessage = await refreshLastMessage(existing.room);
+      // client needs roomId to update the right chat, lastMessage for the sidebar
+      const result = { id, roomId: String(existing.room), lastMessage };
       await broadcast(io, existing.room, "message:deleted", result);
       console.log("[delete] broadcast message:deleted", id);
 

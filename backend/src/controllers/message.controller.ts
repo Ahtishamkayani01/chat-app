@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import { Message } from "../models/message.model";
 import { isValidObjectId } from "mongoose";
+import { deleteAttachmentFile } from "../services/upload.service";
+import { refreshLastMessage } from "../services/message.service";
 
 // This controller only handles a single message: view, edit, delete.
 
@@ -38,6 +40,7 @@ export async function updateMessage(req: Request, res: Response) {
   if (!message) {
     return res.status(404).json({ message: "Message not found or not yours" });
   }
+  await refreshLastMessage(message.room);
   res.json(message);
 }
 
@@ -49,9 +52,13 @@ export async function deleteMessage(req: Request, res: Response) {
   if (!isValidObjectId(messageId)) {
     return res.status(400).json({ message: "Invalid message id" });
   }
-  const message = await Message.findOneAndDelete({ _id: messageId, sender }); 
+  const message = await Message.findOneAndDelete({ _id: messageId, sender });
   if (!message) {
     return res.status(404).json({ message: "Message not found or not yours" });
   }
+  if (message.attachment) {
+    await deleteAttachmentFile(message.attachment);
+  }
+  await refreshLastMessage(message.room);
   res.json({ message: "Message deleted" });
 }

@@ -1,4 +1,5 @@
 import { Schema, model, Types } from "mongoose";
+import type { AttachmentKind } from "./message.model";
 
 export type RoomType = "global" | "direct" | "group";
 
@@ -9,7 +10,8 @@ export interface IRoom {
   admins: string[]; // groups only
   directKey?: string; // DMs only
   createdBy?: string;
-  lastMessage?: { text: string; sender: string; at: Date };
+  // kind is set when the last message has a file, so the sidebar can show its icon
+  lastMessage?: { text: string; sender: string; at: Date; kind?: AttachmentKind };
 }
 
 const roomSchema = new Schema<IRoom>(
@@ -20,7 +22,7 @@ const roomSchema = new Schema<IRoom>(
     admins: { type: [String], default: [] },
     directKey: { type: String, unique: true, sparse: true }, // no duplicate DMs
     createdBy: String,
-    lastMessage: { text: String, sender: String, at: Date },
+    lastMessage: { text: String, sender: String, at: Date, kind: String },
   },
   { timestamps: true },
 );

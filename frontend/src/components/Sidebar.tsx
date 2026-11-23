@@ -1,11 +1,36 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import type { Room } from "@/types/chat";
+import type { AttachmentKind, Room } from "@/types/chat";
 import { formatShort } from "@/lib/format";
 import { getErrorMessage } from "@/lib/errors";
 import { byLatestActivity, roomTitle } from "@/lib/rooms";
+import { normalizePreview } from "@/lib/attachments";
 import { Avatar, GlobalAvatar } from "./Avatar";
+import KindIcon from "./KindIcon";
+
+// Each file kind gets its own soft color in the sidebar preview
+const KIND_COLOR: Record<AttachmentKind, string> = {
+  image: "text-emerald-500",
+  video: "text-violet-500",
+  audio: "text-fuchsia-500",
+  document: "text-blue-500",
+  archive: "text-amber-500",
+};
+
+/** "You: [icon] Photo" / "[icon] Voice message" / "Hello" */
+function LastMessagePreview({ last, me }: { last: NonNullable<Room["lastMessage"]>; me: string }) {
+  const { text, kind } = normalizePreview(last);
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      {last.sender === me && <span className="shrink-0">You:</span>}
+      {kind && (
+        <KindIcon kind={kind} voice={text === "Voice message"} className={`h-4 w-4 ${KIND_COLOR[kind]}`} />
+      )}
+      <span className="truncate">{text}</span>
+    </span>
+  );
+}
 
 type Props = {
   username: string;
@@ -191,7 +216,7 @@ export default function Sidebar({
         {filtered.map((room) => {
           const title = roomTitle(room, username);
           const last = room.lastMessage;
-          const preview = last ? (last.sender === username ? `You: ${last.text}` : last.text) : "Say hi 👋";
+          const preview = last ? <LastMessagePreview last={last} me={username} /> : "Say hi 👋";
           return (
             <ChatRow
               key={room._id}
@@ -223,7 +248,7 @@ function ChatRow({
   onClick: () => void;
   avatar: React.ReactNode;
   title: string;
-  subtitle: string;
+  subtitle: React.ReactNode;
   time?: string;
   unread?: number;
 }) {
@@ -241,7 +266,9 @@ function ChatRow({
           {time && <span className={`shrink-0 text-[11px] ${unread ? "font-semibold text-indigo-600" : "text-slate-400"}`}>{time}</span>}
         </div>
         <div className="flex items-center justify-between">
-          <p className={`truncate text-sm ${unread ? "font-medium text-slate-700" : "text-slate-500"}`}>{subtitle}</p>
+          <div className={`min-w-0 truncate text-sm ${unread ? "font-medium text-slate-700" : "text-slate-500"}`}>
+            {subtitle}
+          </div>
           <UnreadBadge count={unread} />
         </div>
       </div>

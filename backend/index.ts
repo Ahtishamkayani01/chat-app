@@ -10,7 +10,7 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import { registerMessageHandlers } from "./src/socket/message.handler";
 import { verifyToken } from "./src/utils/token";
-
+import uploadRoutes from "./routes/upload.route";
 const app = express();
 
 app.use(cors(corsOptions)); // must be before the routes
@@ -24,7 +24,7 @@ app.use("/api/messages", messageRoutes); // new
 app.use("/api/users", userRoutes);
 app.use("/api/rooms", roomRoutes);
 app.use("/api/auth", authRoutes);
-
+app.use("/api/uploads", uploadRoutes);
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   console.error(err);
   res.status(500).json({ message: err.message });

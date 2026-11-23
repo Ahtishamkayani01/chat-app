@@ -1,7 +1,9 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
-import type { Message } from "@/types/chat";
+import { useEffect, useRef, useState } from "react";
+import type { Attachment, Message, Room } from "@/types/chat";
+
+type DeletedEvent = { id: string; roomId: string; lastMessage?: Room["lastMessage"] | null };
 import { socket, emitAsync } from "@/lib/socket";
 import { formatDay, isSameDay } from "@/lib/format";
 import { getErrorMessage } from "@/lib/errors";
@@ -13,6 +15,7 @@ import {
   useGetMyRoomsQuery,
   useGetRoomMessagesQuery,
   useOpenDirectRoomMutation,
+  useUploadAttachmentMutation,
 } from "@/store/api/chatApi";
 import {
   cacheAddMessage,
@@ -22,6 +25,7 @@ import {
 } from "@/store/api/chatCache";
 import { Avatar, GlobalAvatar } from "./Avatar";
 import MessageItem from "./MessageItem";
+import Composer from "./Composer";
 import Sidebar from "./Sidebar";
 import AuthScreen from "./AuthScreen";
 
@@ -43,8 +47,6 @@ export default function Chat() {
   const [mobileShowChat, setMobileShowChat] = useState(false);
   const [unread, setUnread] = useState<Record<string, number>>({}); // keyed by roomId
 
-  const [text, setText] = useState("");
-  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false); // true once connected AND joined
 
@@ -80,6 +82,7 @@ export default function Chat() {
   const loading = !history && (isFetching || !activeRoomId) && !roomsError;
 
   const [openDirectRoom] = useOpenDirectRoomMutation();
+  const [uploadAttachment] = useUploadAttachmentMutation();
 
   const fetchError = roomsError ?? historyError;
   const shownError = error ?? (fetchError ? getErrorMessage(fetchError, "Failed to load") : null);
@@ -122,8 +125,8 @@ export default function Chat() {
       cacheReplaceMessage(dispatch, me, msg);
     }
 
-    function onDeleted({ id, roomId }: { id: string; roomId: string }) {
-      cacheRemoveMessage(dispatch, me, roomId, id);
+    function onDeleted({ id, roomId, lastMessage }: DeletedEvent) {
+      cacheRemoveMessage(dispatch, me, roomId, id, lastMessage);
     }
 
     socket.on("connect", onConnect);
@@ -173,7 +176,6 @@ export default function Chat() {
     activeRoomIdRef.current = roomId;
     setSelectedRoomId(roomId);
     lastCount.current = 0;
-    setText("");
   }
 
   /** Open (or create) a DM with `other` and switch to it. Throws on failure. */
@@ -207,19 +209,24 @@ export default function Chat() {
     dispatch(chatApi.util.resetApiState()); // drop the previous user's cached data
   }
 
-  async function handleSend(e?: FormEvent) {
-    e?.preventDefault();
-    const value = text.trim();
-    if (!value || !username || !activeRoomId || sending) return;
-    setSending(true);
+  /**
+   * Send a message. With a file it's 2 steps:
+   * 1. upload it to Cloudinary (POST /uploads/attachment) → Attachment info
+   * 2. send { roomId, text, attachment } over the socket → everyone in the room gets it live
+   */
+  async function handleSend(value: string, file?: File) {
+    if (!username || !activeRoomId) return false;
+    const roomId = activeRoomId; // keep the room even if the user switches while uploading
     try {
-      const msg = await emitAsync<Message>("message:send", { roomId: activeRoomId, text: value });
+      let attachment: Attachment | undefined;
+      if (file) attachment = await uploadAttachment(file).unwrap();
+      const msg = await emitAsync<Message>("message:send", { roomId, text: value, attachment });
       cacheAddMessage(dispatch, username, msg);
-      setText("");
+      setError(null);
+      return true;
     } catch (err) {
-      setError(getErrorMessage(err, "Failed to send"));
-    } finally {
-      setSending(false);
+      setError(getErrorMessage(err, file ? "Failed to send file" : "Failed to send"));
+      return false;
     }
   }
 
@@ -238,8 +245,8 @@ export default function Chat() {
   async function handleDelete(id: string) {
     if (!username) return;
     try {
-      const { roomId } = await emitAsync<{ id: string; roomId: string }>("message:delete", { id });
-      cacheRemoveMessage(dispatch, username, roomId, id);
+      const { roomId, lastMessage } = await emitAsync<DeletedEvent>("message:delete", { id });
+      cacheRemoveMessage(dispatch, username, roomId, id, lastMessage);
     } catch (err) {
       setError(getErrorMessage(err, "Failed to delete"));
     }
@@ -355,33 +362,13 @@ export default function Chat() {
             <div ref={bottomRef} />
           </div>
 
-          {/* Composer */}
-          <form onSubmit={handleSend} className="flex items-end gap-2 border-t border-slate-200 bg-white px-3 py-3">
-            <textarea
-              rows={1}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-              placeholder={isGlobal ? "Message everyone…" : `Message ${title}…`}
-              maxLength={1000}
-              className="field-sizing-content max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-[15px] text-slate-800 outline-none focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
-            />
-            <button
-              type="submit"
-              disabled={!text.trim() || sending || !connected || !activeRoomId}
-              title="Send"
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md transition hover:scale-105 disabled:scale-100 disabled:opacity-40"
-            >
-              <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5 translate-x-px">
-                <path d="M3.4 20.4 20.85 12.9a1 1 0 0 0 0-1.8L3.4 3.6a.99.99 0 0 0-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87 1l.01 4.61c0 .71.73 1.2 1.39.91Z" />
-              </svg>
-            </button>
-          </form>
+          <Composer
+            key={activeRoomId ?? "none"}
+            placeholder={isGlobal ? "Message everyone…" : `Message ${title}…`}
+            disabled={!connected || !activeRoomId}
+            onSend={handleSend}
+            onError={setError}
+          />
         </section>
       </div>
     </main>
