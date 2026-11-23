@@ -24,6 +24,9 @@ export interface Imessage {
   sender: string;
   text: string;
   attachment?: Iattachment;
+  deletedFor: string[];
+  deletedForEveryone: boolean;
+  deletedAt?: Date;
 }
 
 const attachmentSchema = new Schema<Iattachment>(
@@ -53,10 +56,23 @@ const messageSchema = new Schema<Imessage>(
     sender: { type: String, required: true, trim: true },
     text: { type: String, trim: true, maxLength: 1000, default: "" },
     attachment: { type: attachmentSchema, required: false },
+    deletedFor: { type: [String], default: [] },
+    deletedForEveryone: { type: Boolean, default: false },
+    deletedAt: Date,
   },
-  { timestamps: true },
+  {
+    timestamps: true,
+    toJSON: {
+      // Who hid a message is private: never send deletedFor to clients
+      transform(_doc, ret: Partial<Imessage>) {
+        delete ret.deletedFor;
+        return ret;
+      },
+    },
+  },
 );
 messageSchema.pre("validate", function () {
+  if (this.deletedForEveryone) return; // placeholder has no content, that's fine
   if (!this.text && !this.attachment) {
     this.invalidate("text", "Message needs text or an attachment");
   }

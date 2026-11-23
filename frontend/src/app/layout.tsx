@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "ChatApp",
-  description: "Simple chat app",
+  description: "Real-time chat: a global room, groups and private messages",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

@@ -41,7 +41,9 @@ export function cacheReplaceMessage(dispatch: AppDispatch, me: string, msg: Mess
     updateQueryData("getMyRooms", me, (draft) => {
       const room = draft.find((r) => r._id === msg.room);
       if (room?.lastMessage && room.lastMessage.at === msg.createdAt) {
-        Object.assign(room.lastMessage, messagePreview(msg));
+        // replace (not merge) so an old "kind" icon doesn't stay after delete-for-everyone
+        const { sender, at } = room.lastMessage;
+        room.lastMessage = { ...messagePreview(msg), sender, at };
       }
     }),
   );

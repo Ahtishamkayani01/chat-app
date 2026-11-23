@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Attachment, Message, Room } from "@/types/chat";
+import type { Attachment, DeleteScope, Message, Room } from "@/types/chat";
 
 type DeletedEvent = { id: string; roomId: string; lastMessage?: Room["lastMessage"] | null };
 import { socket, emitAsync } from "@/lib/socket";
@@ -318,11 +318,18 @@ export default function Chat() {
     }
   }
 
-  async function handleDelete(id: string) {
+  async function handleDelete(id: string, scope: DeleteScope) {
     if (!username) return;
     try {
-      const { roomId, lastMessage } = await emitAsync<DeletedEvent>("message:delete", { id });
-      cacheRemoveMessage(dispatch, username, roomId, id, lastMessage);
+      if (scope === "everyone") {
+        // server keeps a placeholder: replace the bubble, everyone gets message:updated
+        const placeholder = await emitAsync<Message>("message:delete", { id, scope });
+        cacheReplaceMessage(dispatch, username, placeholder);
+      } else {
+        // hidden only for me: drop it from my chat, sidebar preview stays as is
+        const { roomId } = await emitAsync<DeletedEvent>("message:delete", { id, scope });
+        cacheRemoveMessage(dispatch, username, roomId, id);
+      }
     } catch (err) {
       setError(getErrorMessage(err, "Failed to delete"));
     }
@@ -330,7 +337,7 @@ export default function Chat() {
 
   // ---------- sign-in / register ----------
 
-  if (!checkedSession) return <main className="flex-1 bg-slate-950" />;
+  if (!checkedSession) return <main className="flex-1 bg-ink" />;
   if (!username) return <AuthScreen onAuthed={handleAuthed} />;
 
   // ---------- main layout ----------
@@ -340,14 +347,14 @@ export default function Chat() {
   const title = activeRoom ? roomTitle(activeRoom, username) : "Global chat";
   const roomAvatar = isGlobal ? <GlobalAvatar /> : isGroup ? <GroupAvatar name={title} /> : <Avatar name={title} />;
   const subtitle = isGlobal
-    ? "Everyone · tap a name to message privately"
+    ? "Everyone · tap a name to message them privately"
     : isGroup && activeRoom
       ? groupSubtitle(activeRoom, username)
-      : "🔒 Private chat · only you two can see this";
+      : "Private conversation";
 
   return (
-    <main className="flex flex-1 bg-slate-200 lg:p-5">
-      <div className="mx-auto flex h-dvh w-full max-w-6xl overflow-hidden bg-white shadow-xl lg:h-[calc(100dvh-2.5rem)] lg:rounded-2xl">
+    <main className="flex flex-1 bg-stone-100">
+      <div className="flex h-dvh w-full overflow-hidden bg-white">
         <Sidebar
           username={username}
           rooms={rooms}
@@ -363,10 +370,10 @@ export default function Chat() {
 
         <section className={`min-w-0 flex-1 flex-col ${mobileShowChat ? "flex" : "hidden md:flex"}`}>
           {/* Chat header */}
-          <header className="flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-3">
+          <header className="flex items-center gap-3 border-b border-stone-200 bg-white px-4 py-3">
             <button
               onClick={() => setMobileShowChat(false)}
-              className="-ml-1 rounded-full p-1.5 text-slate-500 hover:bg-slate-100 md:hidden"
+              className="-ml-1 rounded-full p-1.5 text-stone-700 hover:bg-stone-100 md:hidden"
               title="Back"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-5 w-5">
@@ -379,20 +386,20 @@ export default function Chat() {
               onClick={() => isGroup && setInfoOpen(true)}
               disabled={!isGroup}
               className={`-my-1 flex min-w-0 flex-1 items-center gap-3 rounded-xl py-1 pr-2 text-left ${
-                isGroup ? "transition hover:bg-slate-50" : "cursor-default"
+                isGroup ? "transition hover:bg-stone-50" : "cursor-default"
               }`}
             >
               {roomAvatar}
               <div className="min-w-0 flex-1">
-                <h2 className="truncate font-semibold text-slate-800">{title}</h2>
-                <p className="truncate text-xs text-slate-500">{subtitle}</p>
+                <h2 className="truncate font-semibold text-stone-800">{title}</h2>
+                <p className="truncate text-xs text-stone-500">{subtitle}</p>
               </div>
             </button>
             {isGroup && (
               <button
                 onClick={() => setInfoOpen(true)}
                 title="Group info"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-indigo-50 hover:text-indigo-600"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-stone-700 transition hover:bg-stone-100 hover:text-stone-900"
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-5 w-5">
                   <circle cx="12" cy="12" r="9" />
@@ -420,19 +427,19 @@ export default function Chat() {
           <div className="chat-bg flex-1 overflow-y-auto px-3 py-4 sm:px-6">
             {loading && (
               <div className="flex justify-center pt-10">
-                <div className="h-6 w-6 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600" />
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent-200 border-t-accent-600" />
               </div>
             )}
 
             {!loading && messages.length === 0 && (
-              <div className="mx-auto mt-16 max-w-xs rounded-2xl bg-white/80 p-6 text-center shadow-sm backdrop-blur">
+              <div className="mx-auto mt-16 max-w-xs p-6 text-center">
                 <div className="mb-3 flex justify-center">{roomAvatar}</div>
-                <p className="font-medium text-slate-700">
+                <p className="font-medium text-stone-700">
                   {isGlobal ? "No messages yet" : isGroup ? `Welcome to ${title}` : `Start chatting with ${title}`}
                 </p>
-                <p className="mt-1 text-sm text-slate-500">
+                <p className="mt-1 text-sm text-stone-500">
                   {isGlobal
-                    ? "Be the first to say hi!"
+                    ? "Nothing here yet. Say something."
                     : isGroup
                       ? `${activeRoom?.members.length ?? 0} members · send the first message`
                       : "Messages here are only visible to you two."}
@@ -440,7 +447,7 @@ export default function Chat() {
                 {isGroup && (
                   <button
                     onClick={() => setInfoOpen(true)}
-                    className="mt-3 rounded-full bg-indigo-50 px-4 py-1.5 text-xs font-semibold text-indigo-600 hover:bg-indigo-100"
+                    className="mt-3 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50"
                   >
                     View members
                   </button>
@@ -456,7 +463,7 @@ export default function Chat() {
                 <div key={m._id}>
                   {newDay && (
                     <div className="my-4 flex justify-center">
-                      <span className="rounded-full bg-white/90 px-3 py-1 text-[11px] font-medium text-slate-500 shadow-sm">
+                      <span className="rounded-md bg-stone-200/70 px-2.5 py-0.5 text-[11px] font-medium text-stone-600">
                         {formatDay(m.createdAt)}
                       </span>
                     </div>

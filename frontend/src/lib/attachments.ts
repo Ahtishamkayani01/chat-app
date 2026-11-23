@@ -59,7 +59,12 @@ export function isVoiceNote(a: Pick<Attachment, "kind" | "name">) {
 }
 
 /** Sidebar preview for a message: { text, kind } (same shape as room.lastMessage). */
-export function messagePreview(m: Pick<Message, "text" | "attachment">) {
+export const DELETED_TEXT = "This message was deleted";
+/** Same limit as the backend (DELETE_FOR_EVERYONE_LIMIT_MS). */
+export const DELETE_FOR_EVERYONE_LIMIT_MS = 10 * 60 * 1000;
+
+export function messagePreview(m: Pick<Message, "text" | "attachment" | "deletedForEveryone">) {
+  if (m.deletedForEveryone) return { text: DELETED_TEXT };
   const a = m.attachment;
   if (!a) return { text: m.text };
   return { text: m.text || (isVoiceNote(a) ? "Voice message" : LABEL[a.kind]), kind: a.kind };

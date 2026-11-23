@@ -5,7 +5,7 @@ import {
   type FetchArgs,
   type FetchBaseQueryError,
 } from "@reduxjs/toolkit/query/react";
-import type { Attachment, Message, Room } from "@/types/chat";
+import type { Attachment, DeleteScope, Message, Room } from "@/types/chat";
 import { API_BASE_URL } from "@/config/env";
 import { expireSession, getSession, type Session } from "@/lib/auth";
 
@@ -160,14 +160,16 @@ export const chatApi = createApi({
       invalidatesTags: (res) => (res ? [{ type: "Messages", id: res.room }] : []),
     }),
 
-    // DELETE /messages/:messageId/delete  (only the author)
+    // DELETE /messages/:messageId/delete?scope=me|everyone
+    // "me" = hide for me (any message), "everyone" = sender only, leaves a placeholder
     deleteMessage: build.mutation<
-      { message: string },
-      { messageId: string; roomId: string }
+      { id: string; roomId: string } | Message,
+      { messageId: string; roomId: string; scope: DeleteScope }
     >({
-      query: ({ messageId }) => ({
+      query: ({ messageId, scope }) => ({
         url: `messages/${messageId}/delete`,
         method: "DELETE",
+        params: { scope },
       }),
       invalidatesTags: (_res, _err, { roomId }) => [{ type: "Messages", id: roomId }],
     }),

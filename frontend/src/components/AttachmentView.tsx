@@ -36,7 +36,7 @@ function ImageAttachment({ a }: { a: Attachment }) {
         data-interactive
         onClick={() => setOpen(true)}
         title="View photo"
-        className={`block overflow-hidden rounded-xl ${MEDIA_WIDTH} ${loaded ? "" : "animate-pulse bg-slate-300/60"}`}
+        className={`block overflow-hidden rounded-xl ${MEDIA_WIDTH} ${loaded ? "" : "animate-pulse bg-stone-300/60"}`}
       >
         {/* eslint-disable-next-line @next/next/no-img-element -- Cloudinary already resizes/optimizes */}
         <img
@@ -45,7 +45,7 @@ function ImageAttachment({ a }: { a: Attachment }) {
           loading="lazy"
           onLoad={() => setLoaded(true)}
           style={{ aspectRatio: aspect(a) }}
-          className="block max-h-96 w-full object-cover transition hover:brightness-95"
+          className="block max-h-96 w-full object-cover transition"
         />
       </button>
       {open && <Lightbox a={a} onClose={() => setOpen(false)} />}
@@ -70,14 +70,14 @@ function Lightbox({ a, onClose }: { a: Attachment; onClose: () => void }) {
         e.stopPropagation();
         onClose();
       }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/90 p-4"
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={a.url}
         alt={a.name}
         onClick={(e) => e.stopPropagation()}
-        className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
+        className="max-h-full max-w-full rounded-lg object-contain shadow-lg"
       />
       <div className="absolute top-4 right-4 flex gap-2">
         <a
@@ -85,7 +85,7 @@ function Lightbox({ a, onClose }: { a: Attachment; onClose: () => void }) {
           target="_blank"
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
-          className="rounded-full bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur hover:bg-white/20"
+          className="rounded-full bg-white/10 px-4 py-2 text-sm font-medium text-white hover:bg-white/20"
         >
           Open original
         </a>
@@ -93,7 +93,7 @@ function Lightbox({ a, onClose }: { a: Attachment; onClose: () => void }) {
           type="button"
           onClick={onClose}
           title="Close"
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur hover:bg-white/20"
+          className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-5 w-5">
             <path d="M6 6l12 12M18 6 6 18" strokeLinecap="round" />
@@ -168,8 +168,8 @@ function AudioPlayer({ a, mine }: { a: Attachment; mine: boolean }) {
         type="button"
         onClick={toggle}
         title={playing ? "Pause" : "Play"}
-        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full shadow-sm transition active:scale-95 ${
-          mine ? "bg-white text-indigo-600" : "bg-gradient-to-br from-indigo-500 to-violet-600 text-white"
+        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition ${
+          mine ? "bg-white text-accent-600 shadow-sm" : "gloss-accent bg-accent-600 text-white"
         }`}
       >
         {playing ? (
@@ -186,22 +186,22 @@ function AudioPlayer({ a, mine }: { a: Attachment; mine: boolean }) {
 
       <div className="min-w-0 flex-1">
         {!voice && (
-          <p className={`mb-1 truncate text-xs font-medium ${mine ? "text-white" : "text-slate-700"}`}>{a.name}</p>
+          <p className={`mb-1 truncate text-xs font-medium ${mine ? "text-white" : "text-stone-700"}`}>{a.name}</p>
         )}
         {/* Progress bar: tap/click anywhere on it to seek */}
         <div onPointerDown={seek} className="group/bar relative flex h-4 cursor-pointer items-center">
-          <div className={`h-1.5 w-full rounded-full ${mine ? "bg-white/30" : "bg-slate-200"}`}>
+          <div className={`h-1.5 w-full rounded-full ${mine ? "bg-white/30" : "bg-stone-200"}`}>
             <div
-              className={`h-full rounded-full ${mine ? "bg-white" : "bg-indigo-500"}`}
+              className={`h-full rounded-full ${mine ? "bg-white" : "bg-accent-500"}`}
               style={{ width: `${pct}%` }}
             />
           </div>
           <span
-            className={`absolute h-3 w-3 -translate-x-1/2 rounded-full shadow ${mine ? "bg-white" : "bg-indigo-600"}`}
+            className={`absolute h-3 w-3 -translate-x-1/2 rounded-full ${mine ? "bg-white" : "bg-accent-600"}`}
             style={{ left: `${pct}%` }}
           />
         </div>
-        <div className={`mt-0.5 flex justify-between text-[11px] ${mine ? "text-white/75" : "text-slate-500"}`}>
+        <div className={`mt-0.5 flex justify-between text-[11px] ${mine ? "text-white/75" : "text-stone-500"}`}>
           <span className="flex items-center gap-1">
             {voice ? (
               <>
@@ -229,19 +229,19 @@ function FileCard({ a, mine }: { a: Attachment; mine: boolean }) {
       rel="noopener noreferrer"
       title={`Open ${a.name}`}
       className={`flex w-64 max-w-full items-center gap-3 rounded-xl p-2.5 transition ${
-        mine ? "bg-white/15 hover:bg-white/25" : "bg-slate-50 ring-1 ring-slate-200 hover:bg-slate-100"
+        mine ? "bg-white/15 hover:bg-white/25" : "bg-stone-50 ring-1 ring-stone-200 hover:bg-stone-100"
       }`}
     >
       <FileIcon ext={a.ext} />
       <div className="min-w-0 flex-1">
-        <p className={`truncate text-sm font-medium ${mine ? "text-white" : "text-slate-800"}`}>{a.name}</p>
-        <p className={`text-xs ${mine ? "text-white/70" : "text-slate-500"}`}>
+        <p className={`truncate text-sm font-medium ${mine ? "text-white" : "text-stone-800"}`}>{a.name}</p>
+        <p className={`text-xs ${mine ? "text-white/70" : "text-stone-500"}`}>
           {a.ext.toUpperCase()} · {formatBytes(a.size)}
         </p>
       </div>
       <span
         className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
-          mine ? "bg-white/20 text-white" : "bg-white text-indigo-600 shadow-sm"
+          mine ? "bg-white/20 text-white" : "bg-white text-stone-600 ring-1 ring-stone-200"
         }`}
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4">

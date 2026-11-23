@@ -3,6 +3,7 @@ import { kindOf } from "../utils/fileKind";
 import { getRoomForMember } from "./room.service";
 import { Room } from "../models/room.model";
 import { Types } from "mongoose";
+import { deleteAttachmentFile } from "./upload.service";
 
 // Sidebar label when a message has no caption. No emojis here: the frontend
 // draws a proper icon from lastMessage.kind (emojis look different on every OS).
@@ -13,7 +14,8 @@ const LABEL: Record<AttachmentKind, string> = {
   document: "Document",
   archive: "Archive",
 };
-
+export const DELETED_TEXT = "This message was deleted";
+const DELETE_FOR_EVERYONE_LIMIT_MS = 10 * 60 * 1000; // 10 minutes
 /** Sidebar preview for a message: its text (or a label) + the file kind for the icon. */
 function previewOf(text: string, attachment?: Iattachment) {
   if (!attachment) return { text };
@@ -106,10 +108,14 @@ export async function sendMessage(
  * Returns the new preview (null = the room has no messages left).
  */
 export async function refreshLastMessage(roomId: Types.ObjectId | string) {
-  const latest = await Message.findOne({ room: roomId }).sort({ createdAt: -1 });
+  const latest = await Message.findOne({ room: roomId }).sort({
+    createdAt: -1,
+  });
   const lastMessage = latest
     ? {
-        ...previewOf(latest.text, latest.attachment ?? undefined),
+        ...(latest.deletedForEveryone
+          ? { text: DELETED_TEXT }
+          : previewOf(latest.text, latest.attachment ?? undefined)),
         sender: latest.sender,
         at: latest.get("createdAt") as Date,
       }
@@ -123,5 +129,51 @@ export async function refreshLastMessage(roomId: Types.ObjectId | string) {
 
 export async function getRoomMessages(roomId: string, username: string) {
   const room = await getRoomForMember(roomId, username);
-  return Message.find({ room: room._id }).sort({ createdAt: 1 });
+  return Message.find({ room: room._id, deletedFor: { $ne: username } }).sort({
+    createdAt: 1,
+  });
+}
+
+export async function deleteForMe(messageId: string, username: string) {
+  if (!Types.ObjectId.isValid(messageId)) throw new Error("Invalid message id");
+  const message = await Message.findById(messageId);
+  if (!message) throw new Error("Message not found");
+
+  // must still be a member of the room the message is in
+  await getRoomForMember(String(message.room), username);
+
+  // $addToSet = push only if not already there (safe to call twice)
+  await Message.updateOne(
+    { _id: message._id },
+    { $addToSet: { deletedFor: username } },
+  );
+  return { id: messageId, roomId: String(message.room) };
+}
+
+/** Sender wipes the content for everybody; a placeholder stays in the chat. */
+export async function deleteForEveryone(messageId: string, username: string) {
+  if (!Types.ObjectId.isValid(messageId)) throw new Error("Invalid message id");
+  const message = await Message.findById(messageId);
+  if (!message) throw new Error("Message not found");
+  if (message.sender !== username) throw new Error("Not your message");
+  if (message.deletedForEveryone) throw new Error("Already deleted");
+
+  const age = Date.now() - new Date(message.get("createdAt")).getTime();
+  if (age > DELETE_FOR_EVERYONE_LIMIT_MS) {
+    throw new Error("Too late to delete for everyone");
+  }
+
+  const attachment = message.attachment;
+
+  message.text = "";
+  message.attachment = undefined;
+  message.deletedForEveryone = true;
+  message.deletedAt = new Date();
+  await message.save();
+
+  // remove the file only after the DB save worked
+  if (attachment) await deleteAttachmentFile(attachment);
+
+  const lastMessage = await refreshLastMessage(message.room);
+  return { message, lastMessage };
 }

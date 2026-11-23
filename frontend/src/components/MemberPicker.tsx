@@ -46,16 +46,16 @@ export default function MemberPicker({ me, value, onChange, exclude = [], autoFo
   return (
     <div>
       <div
-        className={`flex flex-wrap items-center gap-1.5 rounded-xl border bg-slate-50 p-1.5 transition focus-within:bg-white focus-within:ring-4 ${
+        className={`flex flex-wrap items-center gap-1.5 rounded-xl border bg-stone-50 p-1.5 transition focus-within:bg-white focus-within:ring-2 ${
           error
             ? "border-red-300 focus-within:ring-red-100"
-            : "border-slate-200 focus-within:border-indigo-400 focus-within:ring-indigo-100"
+            : "border-stone-200 focus-within:border-accent-400 focus-within:ring-accent-100"
         }`}
       >
         {value.map((name) => (
           <span
             key={name}
-            className="flex animate-[pop_140ms_ease-out] items-center gap-1.5 rounded-full bg-white py-0.5 pr-1 pl-0.5 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-200"
+            className="flex animate-[pop_140ms_ease-out] items-center gap-1.5 rounded-full bg-white py-0.5 pr-1 pl-0.5 text-sm font-medium text-stone-700 ring-1 ring-stone-200"
           >
             <Avatar name={name} size="xs" />
             {name}
@@ -63,7 +63,7 @@ export default function MemberPicker({ me, value, onChange, exclude = [], autoFo
               type="button"
               onClick={() => onChange(value.filter((n) => n !== name))}
               title={`Remove ${name}`}
-              className="flex h-5 w-5 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              className="flex h-5 w-5 items-center justify-center rounded-full text-stone-400 hover:bg-stone-100 hover:text-stone-700"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="h-3 w-3">
                 <path d="M6 6l12 12M18 6 6 18" strokeLinecap="round" />
@@ -90,7 +90,7 @@ export default function MemberPicker({ me, value, onChange, exclude = [], autoFo
           }}
           placeholder={value.length ? "Add another…" : "Type a username and press Enter"}
           maxLength={30}
-          className="min-w-32 flex-1 bg-transparent px-2 py-1.5 text-sm text-slate-800 outline-none placeholder:text-slate-400"
+          className="min-w-32 flex-1 bg-transparent px-2 py-1.5 text-sm text-stone-800 outline-none placeholder:text-stone-400"
         />
 
         {input.trim() && (
@@ -98,7 +98,7 @@ export default function MemberPicker({ me, value, onChange, exclude = [], autoFo
             type="button"
             onClick={() => void add()}
             disabled={checking}
-            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+            className="flex items-center gap-1.5 rounded-lg gloss-accent bg-accent-600 px-3 py-1.5 text-xs font-semibold text-white hover:brightness-110 disabled:opacity-60"
           >
             {checking && <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white" />}
             Add

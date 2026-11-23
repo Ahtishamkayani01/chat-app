@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Message } from "@/types/chat";
+import type { DeleteScope, Message } from "@/types/chat";
 import { formatTime } from "@/lib/format";
+import { DELETED_TEXT, DELETE_FOR_EVERYONE_LIMIT_MS } from "@/lib/attachments";
 import { Avatar } from "./Avatar";
 import AttachmentView from "./AttachmentView";
+import DeleteMessageDialog from "./DeleteMessageDialog";
 
 function PencilIcon() {
   return (
@@ -26,6 +28,15 @@ function TrashIcon() {
   );
 }
 
+function BanIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4 shrink-0" aria-hidden="true">
+      <circle cx="10" cy="10" r="7" />
+      <path d="M5 15 15 5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 type Props = {
   message: Message;
   mine: boolean;
@@ -35,7 +46,7 @@ type Props = {
   showNames: boolean;
   onOpenDm: (name: string) => void;
   onEdit: (id: string, text: string) => Promise<boolean>;
-  onDelete: (id: string) => Promise<void>;
+  onDelete: (id: string, scope: DeleteScope) => Promise<void>;
 };
 
 export default function MessageItem({
@@ -51,31 +62,31 @@ export default function MessageItem({
   const [editText, setEditText] = useState("");
   const [menuOpen, setMenuOpen] = useState(false); // Edit/Delete menu (tap on mobile)
   const [confirming, setConfirming] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [deleting, setDeleting] = useState<DeleteScope | null>(null);
+  const [canDeleteForEveryone, setCanDeleteForEveryone] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  const edited = m.updatedAt !== m.createdAt;
-  const a = m.attachment;
+  const deleted = !!m.deletedForEveryone; // placeholder: no text, no file
+  const edited = !deleted && m.updatedAt !== m.createdAt;
+  const a = deleted ? undefined : m.attachment;
   const isMedia = a?.kind === "image" || a?.kind === "video";
-  const canEdit = mine && !!m.text; // edit = change the text / caption
+  const canEdit = mine && !deleted && !!m.text; // edit = change the text / caption
 
-  // Close the menu / confirm box when tapping anywhere outside this message
+  // Close the action menu when tapping anywhere outside this message.
+  // (The delete popup handles its own closing: backdrop, Cancel, Esc.)
   useEffect(() => {
-    if (!menuOpen && !confirming) return;
+    if (!menuOpen) return;
     function onDown(e: PointerEvent) {
-      if (!rootRef.current?.contains(e.target as Node)) {
-        setMenuOpen(false);
-        setConfirming(false);
-      }
+      if (!rootRef.current?.contains(e.target as Node)) setMenuOpen(false);
     }
     document.addEventListener("pointerdown", onDown);
     return () => document.removeEventListener("pointerdown", onDown);
-  }, [menuOpen, confirming]);
+  }, [menuOpen]);
 
   // Tap a bubble to show its actions. Phones have no hover, so this is how
   // mobile users reach Edit/Delete. Taps on links, players and buttons are ignored.
   function onBubbleClick(e: React.MouseEvent) {
-    if (!mine || confirming) return;
+    if (confirming) return; // anyone can open the menu: "delete for me" works on every message
     if ((e.target as HTMLElement).closest("a, button, video, audio, [data-interactive]")) return;
     if (window.getSelection()?.toString()) return; // user is selecting text
     setMenuOpen((open) => !open);
@@ -89,13 +100,16 @@ export default function MessageItem({
 
   function askDelete() {
     setMenuOpen(false);
+    // Only the sender, only once, only within the time limit (the server checks too)
+    const age = Date.now() - new Date(m.createdAt).getTime();
+    setCanDeleteForEveryone(mine && !deleted && age < DELETE_FOR_EVERYONE_LIMIT_MS);
     setConfirming(true);
   }
 
-  async function confirmDelete() {
-    setDeleting(true);
-    await onDelete(m._id);
-    setDeleting(false);
+  async function confirmDelete(scope: DeleteScope) {
+    setDeleting(scope);
+    await onDelete(m._id, scope);
+    setDeleting(null);
     setConfirming(false);
   }
 
@@ -125,22 +139,22 @@ export default function MessageItem({
 
       <div className={`flex max-w-[85%] flex-col sm:max-w-[78%] ${mine ? "items-end" : "items-start"}`}>
         {/* Action menu: opens when you tap your own bubble (works on mobile + desktop) */}
-        {mine && menuOpen && !editing && (
-          <div className="mb-1.5 flex animate-[pop_140ms_ease-out] items-center gap-0.5 rounded-full bg-white p-1 shadow-lg ring-1 ring-slate-900/5">
+        {menuOpen && !editing && (
+          <div className="mb-1.5 flex animate-[pop_140ms_ease-out] items-center gap-0.5 rounded-lg border border-stone-200 bg-white p-0.5 shadow-sm">
             {canEdit && (
               <>
                 <button
                   onClick={startEdit}
-                  className="flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-semibold text-slate-700 transition hover:bg-indigo-50 hover:text-indigo-600 active:scale-95"
+                  className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-stone-700 transition hover:bg-accent-50 hover:text-accent-600"
                 >
                   <PencilIcon /> Edit
                 </button>
-                <span className="h-4 w-px bg-slate-200" />
+                <span className="h-4 w-px bg-stone-200" />
               </>
             )}
             <button
               onClick={askDelete}
-              className="flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50 active:scale-95"
+              className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-50"
             >
               <TrashIcon /> Delete
             </button>
@@ -148,8 +162,8 @@ export default function MessageItem({
         )}
 
         {editing ? (
-          <div className="w-80 max-w-full rounded-2xl border border-indigo-200 bg-white p-3 shadow-lg">
-            <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-indigo-600">
+          <div className="w-80 max-w-full rounded-lg border border-stone-300 bg-white p-3 shadow-sm">
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-stone-500">
               <PencilIcon /> {a ? "Edit caption" : "Edit message"}
             </p>
             <textarea
@@ -165,21 +179,21 @@ export default function MessageItem({
                 if (e.key === "Escape") setEditing(false);
               }}
               maxLength={1000}
-              className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+              className="w-full resize-none rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-800 outline-none focus:border-stone-400"
             />
             <div className="mt-2 flex items-center justify-between gap-2">
-              <span className="hidden text-[11px] text-slate-400 sm:inline">Enter to save · Esc to cancel</span>
+              <span className="hidden text-[11px] text-stone-400 sm:inline">Enter to save · Esc to cancel</span>
               <div className="ml-auto flex gap-2">
                 <button
                   onClick={() => setEditing(false)}
-                  className="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100"
+                  className="rounded-lg px-3 py-1.5 text-xs font-medium text-stone-600 hover:bg-stone-100"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={save}
                   disabled={!editText.trim() || editText.trim() === m.text}
-                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                  className="rounded-lg gloss-accent bg-accent-600 px-3 py-1.5 text-xs font-medium text-white hover:brightness-110 disabled:opacity-50"
                 >
                   Save
                 </button>
@@ -190,13 +204,13 @@ export default function MessageItem({
           <div className="flex items-center gap-1.5">
             {/* Desktop only: quick hover buttons. Hidden on touch screens,
                 where invisible buttons would catch taps by accident. */}
-            {mine && !confirming && !menuOpen && (
+            {!confirming && !menuOpen && (
               <div className="hidden gap-0.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100 pointer-fine:flex">
                 {canEdit && (
                   <button
                     onClick={startEdit}
                     title="Edit"
-                    className="rounded-full p-1.5 text-slate-400 hover:bg-white hover:text-indigo-600 hover:shadow-sm"
+                    className="rounded-full p-1.5 text-stone-400 hover:bg-white hover:text-accent-600"
                   >
                     <PencilIcon />
                   </button>
@@ -204,7 +218,7 @@ export default function MessageItem({
                 <button
                   onClick={askDelete}
                   title="Delete"
-                  className="rounded-full p-1.5 text-slate-400 hover:bg-white hover:text-red-600 hover:shadow-sm"
+                  className="rounded-full p-1.5 text-stone-400 hover:bg-white hover:text-red-600"
                 >
                   <TrashIcon />
                 </button>
@@ -213,24 +227,28 @@ export default function MessageItem({
 
             <div
               onClick={onBubbleClick}
-              className={`relative rounded-2xl shadow-sm transition ${
+              className={`relative rounded-xl transition ${
                 a ? (isMedia ? "p-1" : "p-2") : "px-3.5 py-2"
-              } ${
-                mine
-                  ? "cursor-pointer bg-gradient-to-br from-indigo-500 to-violet-600 text-white"
-                  : "bg-white text-slate-800 ring-1 ring-slate-900/5"
+              } cursor-pointer ${
+                deleted
+                  ? mine
+                    ? "bg-accent-50 text-accent-400 ring-1 ring-accent-100"
+                    : "bg-white/70 text-stone-400 ring-1 ring-stone-200"
+                  : mine
+                    ? "gloss-accent bg-accent-600 text-white"
+                    : "gloss-surface bg-white text-stone-800"
               } ${showSender ? (mine ? "rounded-tr-md" : "rounded-tl-md") : ""} ${
                 confirming
-                  ? "ring-2 ring-red-400 ring-offset-2"
+                  ? "ring-2 ring-red-300"
                   : menuOpen
-                    ? "ring-2 ring-indigo-300 ring-offset-2"
+                    ? "ring-2 ring-stone-300"
                     : ""
               }`}
             >
               {showNames && !mine && showSender && (
                 <button
                   onClick={() => onOpenDm(m.sender)}
-                  className={`mb-0.5 block text-xs font-semibold text-indigo-600 hover:underline ${a ? "px-2 pt-1" : ""}`}
+                  className={`mb-0.5 block text-xs font-semibold text-accent-600 hover:underline ${a ? "px-2 pt-1" : ""}`}
                   title={`Message ${m.sender} privately`}
                 >
                   {m.sender}
@@ -239,7 +257,13 @@ export default function MessageItem({
 
               {a && <AttachmentView attachment={a} mine={mine} />}
 
-              {m.text ? (
+              {deleted ? (
+                <p className="flex items-center gap-1.5 text-[14px] leading-snug italic">
+                  <BanIcon />
+                  {mine ? "You deleted this message" : DELETED_TEXT}
+                  <span className="invisible ml-2 inline-block text-[10px]">{timeLabel}</span>
+                </p>
+              ) : m.text ? (
                 <p
                   className={`text-[15px] leading-snug break-words whitespace-pre-wrap ${
                     a ? (isMedia ? "px-2.5 pt-1.5 pb-1" : "px-1.5 pt-1.5") : ""
@@ -257,8 +281,8 @@ export default function MessageItem({
               <span
                 className={`pointer-events-none absolute text-[10px] ${
                   !m.text && isMedia
-                    ? "right-2.5 bottom-2.5 rounded-full bg-black/45 px-1.5 py-0.5 text-white backdrop-blur-sm"
-                    : `right-3 bottom-1.5 ${mine ? "text-white/70" : "text-slate-400"}`
+                    ? "right-2.5 bottom-2.5 rounded-full bg-black/45 px-1.5 py-0.5 text-white"
+                    : `right-3 bottom-1.5 ${mine && !deleted ? "text-white/70" : "text-stone-400"}`
                 }`}
               >
                 {timeLabel}
@@ -267,35 +291,15 @@ export default function MessageItem({
           </div>
         )}
 
-        {/* Delete confirmation */}
         {confirming && (
-          <div className="mt-1.5 flex animate-[pop_140ms_ease-out] flex-wrap items-center gap-2 rounded-2xl bg-white py-1.5 pr-1.5 pl-3 text-xs shadow-lg ring-1 ring-red-100">
-            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-red-50 text-red-600">
-              <TrashIcon />
-            </span>
-            <span className="font-medium text-slate-700">
-              {a ? "Delete message and file?" : "Delete this message?"}
-            </span>
-            <div className="ml-auto flex gap-1">
-              <button
-                onClick={() => setConfirming(false)}
-                disabled={deleting}
-                className="rounded-full px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-100"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmDelete}
-                disabled={deleting}
-                className="flex items-center gap-1.5 rounded-full bg-red-600 px-3 py-1.5 font-semibold text-white shadow-sm hover:bg-red-700 disabled:opacity-60"
-              >
-                {deleting && (
-                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-                )}
-                Delete
-              </button>
-            </div>
-          </div>
+          <DeleteMessageDialog
+            message={m}
+            mine={mine}
+            canDeleteForEveryone={canDeleteForEveryone}
+            deleting={deleting}
+            onDelete={(scope) => void confirmDelete(scope)}
+            onClose={() => setConfirming(false)}
+          />
         )}
       </div>
     </div>

@@ -1,13 +1,14 @@
+// Muted tints with dark initials: easier on the eye than bright gradients
 const COLORS = [
-  "from-rose-400 to-rose-600",
-  "from-orange-400 to-orange-600",
-  "from-amber-400 to-amber-600",
-  "from-emerald-400 to-emerald-600",
-  "from-teal-400 to-teal-600",
-  "from-sky-400 to-sky-600",
-  "from-indigo-400 to-indigo-600",
-  "from-violet-400 to-violet-600",
-  "from-fuchsia-400 to-fuchsia-600",
+  "bg-rose-100 text-rose-800",
+  "bg-orange-100 text-orange-800",
+  "bg-amber-100 text-amber-800",
+  "bg-pink-100 text-pink-800",
+  "bg-sky-100 text-sky-800",
+  "bg-blue-100 text-blue-800",
+  "bg-indigo-100 text-indigo-800",
+  "bg-violet-100 text-violet-800",
+  "bg-fuchsia-100 text-fuchsia-800",
 ];
 
 // Same name -> same color, every time.
@@ -32,7 +33,7 @@ const SIZES = {
 export function Avatar({ name, size = "md" }: { name: string; size?: keyof typeof SIZES }) {
   return (
     <div
-      className={`${SIZES[size]} flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br font-semibold text-white shadow-sm ${colorFor(name)}`}
+      className={`${SIZES[size]} flex shrink-0 items-center justify-center rounded-full font-semibold ${colorFor(name)}`}
       aria-hidden="true"
     >
       {initials(name)}
@@ -43,7 +44,7 @@ export function Avatar({ name, size = "md" }: { name: string; size?: keyof typeo
 export function GlobalAvatar({ size = "md" }: { size?: keyof typeof SIZES }) {
   return (
     <div
-      className={`${SIZES[size]} flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-sm`}
+      className={`${SIZES[size]} flex shrink-0 items-center justify-center rounded-full gloss-accent bg-accent-600 text-white`}
       aria-hidden="true"
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="h-1/2 w-1/2">
@@ -59,7 +60,7 @@ export function GroupAvatar({ name, size = "md" }: { name: string; size?: keyof 
   const box = size === "lg" ? "h-20 w-20" : SIZES[size];
   return (
     <div
-      className={`${box} flex shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br text-white shadow-sm ${colorFor(name || "group")}`}
+      className={`${box} flex shrink-0 items-center justify-center rounded-lg ${colorFor(name || "group")}`}
       aria-hidden="true"
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} className="h-1/2 w-1/2">

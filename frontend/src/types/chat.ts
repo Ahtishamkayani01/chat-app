@@ -22,9 +22,13 @@ export interface Message {
   sender: string;
   text: string; // "" when the message is only an attachment
   attachment?: Attachment;
+  deletedForEveryone?: boolean; // sender deleted it: show a placeholder
+  deletedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
+
+export type DeleteScope = "me" | "everyone";
 
 export interface Room {
   _id: string;

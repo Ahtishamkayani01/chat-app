@@ -152,27 +152,27 @@ export default function Composer({ placeholder, disabled, onSend, onError }: Pro
   const fileKind = file ? kindOfFile(file.name) : null;
 
   return (
-    <div className="border-t border-slate-200 bg-white px-3 pt-2 pb-3">
+    <div className="border-t border-stone-200 bg-white px-3 pt-2 pb-3">
       {/* Selected file preview */}
       {file && (
-        <div className="mb-2 flex items-center gap-3 rounded-2xl bg-slate-50 p-2 pr-3 ring-1 ring-slate-200">
+        <div className="mb-2 flex items-center gap-3 rounded-lg border border-stone-200 bg-stone-50 p-2 pr-3">
           {previewUrl && fileKind === "image" ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={previewUrl} alt="" className="h-14 w-14 rounded-xl object-cover" />
           ) : previewUrl && fileKind === "video" ? (
             <video src={previewUrl} muted className="h-14 w-14 rounded-xl bg-black object-cover" />
           ) : (
-            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-white ring-1 ring-slate-200">
+            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-white ring-1 ring-stone-200">
               <FileIcon ext={extOf(file.name)} />
             </div>
           )}
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-slate-800">{file.name}</p>
-            <p className="flex items-center gap-1.5 text-xs text-slate-500">
+            <p className="truncate text-sm font-medium text-stone-800">{file.name}</p>
+            <p className="flex items-center gap-1.5 text-xs text-stone-500">
               {formatBytes(file.size)} ·{" "}
               {sending ? (
                 <>
-                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600" />
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-accent-200 border-t-accent-600" />
                   Uploading…
                 </>
               ) : (
@@ -185,7 +185,7 @@ export default function Composer({ placeholder, disabled, onSend, onError }: Pro
             onClick={clearFile}
             disabled={sending}
             title="Remove file"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-white hover:text-slate-700 disabled:opacity-40"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-stone-400 hover:bg-white hover:text-stone-700 disabled:opacity-40"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4">
               <path d="M6 6l12 12M18 6 6 18" strokeLinecap="round" />
@@ -196,15 +196,15 @@ export default function Composer({ placeholder, disabled, onSend, onError }: Pro
 
       {/* Voice note being sent */}
       {sending && !file && !text && (
-        <p className="mb-2 flex items-center gap-2 px-2 text-xs text-slate-500">
-          <span className="h-3 w-3 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600" />
+        <p className="mb-2 flex items-center gap-2 px-2 text-xs text-stone-500">
+          <span className="h-3 w-3 animate-spin rounded-full border-2 border-accent-200 border-t-accent-600" />
           Sending voice message…
         </p>
       )}
 
       <form onSubmit={handleSubmit} className="flex items-end gap-2">
         {recording ? (
-          <div className="flex h-11 flex-1 items-center gap-3 rounded-2xl bg-red-50 px-3 ring-1 ring-red-100">
+          <div className="flex h-11 flex-1 items-center gap-3 rounded-xl bg-red-50 px-3 ring-1 ring-red-100">
             <button
               type="button"
               onClick={() => stopRecording(false)}
@@ -239,7 +239,7 @@ export default function Composer({ placeholder, disabled, onSend, onError }: Pro
               onClick={() => fileInput.current?.click()}
               disabled={sending}
               title="Attach a photo, video or file"
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-40"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-stone-500 transition hover:bg-stone-100 hover:text-stone-800 disabled:opacity-40"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-5.5 w-5.5">
                 <path
@@ -270,7 +270,7 @@ export default function Composer({ placeholder, disabled, onSend, onError }: Pro
               }}
               placeholder={file ? "Add a caption…" : placeholder}
               maxLength={1000}
-              className="field-sizing-content max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-[15px] text-slate-800 outline-none focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
+              className="field-sizing-content max-h-32 min-h-11 flex-1 resize-none rounded-[22px] border border-stone-200 bg-stone-50 px-4 py-2.5 text-[15px] text-stone-800 outline-none focus:border-accent-300 focus:bg-white focus:ring-2 focus:ring-accent-100"
             />
           </>
         )}
@@ -281,7 +281,7 @@ export default function Composer({ placeholder, disabled, onSend, onError }: Pro
             onClick={() => void startRecording()}
             disabled={disabled || sending}
             title="Record a voice message"
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md transition hover:scale-105 disabled:scale-100 disabled:opacity-40"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-stone-500 transition hover:bg-stone-100 hover:text-stone-800 disabled:opacity-40"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-5 w-5">
               <rect x="9" y="3" width="6" height="12" rx="3" />
@@ -294,7 +294,7 @@ export default function Composer({ placeholder, disabled, onSend, onError }: Pro
             onClick={recording ? () => stopRecording(true) : undefined}
             disabled={recording ? false : !canSend}
             title="Send"
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md transition hover:scale-105 disabled:scale-100 disabled:opacity-40"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full gloss-accent bg-accent-600 text-white transition hover:brightness-110 disabled:bg-stone-300"
           >
             {sending ? (
               <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/40 border-t-white" />

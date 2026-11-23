@@ -3,8 +3,7 @@ import { Message } from "../models/message.model";
 import { User } from "../models/user.model";
 import { isValidObjectId, Types } from "mongoose";
 import { Room } from "../models/room.model";
-import { refreshLastMessage, sendMessage } from "../services/message.service";
-import { deleteAttachmentFile } from "../services/upload.service";
+import { deleteForEveryone, deleteForMe, refreshLastMessage, sendMessage } from "../services/message.service";
 
 const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 //helper
@@ -93,7 +92,8 @@ export function registerMessageHandlers(io: Server, socket: Socket) {
       if (!existing) throw new Error("Message not found");
       if (existing.sender !== socket.data.username)
         throw new Error("Not your message");
-
+      if (existing.deletedForEveryone)
+        throw new Error("Can't edit a deleted message");
       const message = await Message.findByIdAndUpdate(
         id,
         { text },
@@ -109,31 +109,28 @@ export function registerMessageHandlers(io: Server, socket: Socket) {
     }),
   );
 
-  // DELETE
+  // DELETE   payload: { id, scope: "me" | "everyone" }
   socket.on("message:delete", (payload, ack) =>
     withAck(ack, async () => {
       console.log("[delete] received:", payload);
 
+      const username = socket.data.username as string;
       const id = str(payload?.id);
-      if (!isValidObjectId(id)) throw new Error("Invalid message id");
-      // Find first, check owner, then delete
-      const existing = await Message.findById(id);
-      if (!existing) throw new Error("Message not found");
-      if (existing.sender !== socket.data.username)
-        throw new Error("Not your message");
+      const scope = payload?.scope === "everyone" ? "everyone" : "me";
 
-      await Message.findByIdAndDelete(id);
-      if (existing.attachment) {
-        await deleteAttachmentFile(existing.attachment);
+      if (scope === "me") {
+        const result = await deleteForMe(id, username);
+        // only MY tabs: nobody else's chat changes
+        io.to(`user:${username}`).emit("message:deleted", result);
+        console.log("[delete] for me", id);
+        return result;
       }
 
-      const lastMessage = await refreshLastMessage(existing.room);
-      // client needs roomId to update the right chat, lastMessage for the sidebar
-      const result = { id, roomId: String(existing.room), lastMessage };
-      await broadcast(io, existing.room, "message:deleted", result);
-      console.log("[delete] broadcast message:deleted", id);
-
-      return result;
+      const { message, lastMessage } = await deleteForEveryone(id, username);
+      const data = { ...message.toJSON(), lastMessage };
+      await broadcast(io, message.room, "message:updated", data);
+      console.log("[delete] for everyone", id);
+      return data;
     }),
   );
 }
