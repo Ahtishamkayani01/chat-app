@@ -11,6 +11,7 @@ import { Server } from "socket.io";
 import { registerMessageHandlers } from "./src/socket/message.handler";
 import { verifyToken } from "./src/utils/token";
 import uploadRoutes from "./routes/upload.route";
+import { setIO } from "./src/socket/io";
 const app = express();
 
 app.use(cors(corsOptions)); // must be before the routes
@@ -42,7 +43,7 @@ if (!process.env.VERCEL) {
       credentials: true,
     },
   });
-
+  setIO(io); // let REST controllers emit socket events
   // Runs once per connection: reject sockets without a valid token
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
