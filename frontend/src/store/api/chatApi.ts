@@ -86,6 +86,43 @@ export const chatApi = createApi({
       },
     }),
 
+    // ---------- Groups ----------
+    // The sidebar is updated from the response (in Chat.tsx) AND from socket
+    // events (room:new / room:updated / room:removed), so all tabs stay in sync.
+
+    // POST /rooms/group/create  → the new group room (I'm its admin)
+    createGroup: build.mutation<Room, { name: string; members: string[] }>({
+      query: (body) => ({ url: "rooms/group/create", method: "POST", body }),
+    }),
+
+    // POST /rooms/:roomId/members/add  (admin)
+    addGroupMembers: build.mutation<Room, { roomId: string; usernames: string[] }>({
+      query: ({ roomId, usernames }) => ({
+        url: `rooms/${roomId}/members/add`,
+        method: "POST",
+        body: { usernames },
+      }),
+    }),
+
+    // POST /rooms/:roomId/members/remove  (admin)
+    removeGroupMember: build.mutation<Room, { roomId: string; username: string }>({
+      query: ({ roomId, username }) => ({
+        url: `rooms/${roomId}/members/remove`,
+        method: "POST",
+        body: { username },
+      }),
+    }),
+
+    // POST /rooms/:roomId/leave  → { roomId }  (my messages stay in the group)
+    leaveGroup: build.mutation<{ roomId: string }, string>({
+      query: (roomId) => ({ url: `rooms/${roomId}/leave`, method: "POST" }),
+    }),
+
+    // PUT /rooms/:roomId/rename  (admin)
+    renameGroup: build.mutation<Room, { roomId: string; name: string }>({
+      query: ({ roomId, name }) => ({ url: `rooms/${roomId}/rename`, method: "PUT", body: { name } }),
+    }),
+
     // GET /rooms/:roomId/messages/history  (user = cache key only)
     getRoomMessages: build.query<Message[], { roomId: string; user: string }>({
       query: ({ roomId }) => `rooms/${roomId}/messages/history`,
@@ -164,4 +201,9 @@ export const {
   useEditMessageMutation,
   useDeleteMessageMutation,
   useUploadAttachmentMutation,
+  useCreateGroupMutation,
+  useAddGroupMembersMutation,
+  useRemoveGroupMemberMutation,
+  useLeaveGroupMutation,
+  useRenameGroupMutation,
 } = chatApi;

@@ -31,8 +31,8 @@ type Props = {
   mine: boolean;
   /** First message in a run from the same sender (shows name + avatar in global chat). */
   showSender: boolean;
-  /** Global chat shows avatars and names; private chat doesn't need them. */
-  isGlobal: boolean;
+  /** Global + group chats show avatars and names; a 1-to-1 chat doesn't need them. */
+  showNames: boolean;
   onOpenDm: (name: string) => void;
   onEdit: (id: string, text: string) => Promise<boolean>;
   onDelete: (id: string) => Promise<void>;
@@ -42,7 +42,7 @@ export default function MessageItem({
   message: m,
   mine,
   showSender,
-  isGlobal,
+  showNames,
   onOpenDm,
   onEdit,
   onDelete,
@@ -105,7 +105,7 @@ export default function MessageItem({
     if (await onEdit(m._id, value)) setEditing(false);
   }
 
-  const showAvatarColumn = isGlobal && !mine;
+  const showAvatarColumn = showNames && !mine;
   const timeLabel = `${edited ? "edited · " : ""}${formatTime(m.createdAt)}`;
 
   return (
@@ -227,7 +227,7 @@ export default function MessageItem({
                     : ""
               }`}
             >
-              {isGlobal && !mine && showSender && (
+              {showNames && !mine && showSender && (
                 <button
                   onClick={() => onOpenDm(m.sender)}
                   className={`mb-0.5 block text-xs font-semibold text-indigo-600 hover:underline ${a ? "px-2 pt-1" : ""}`}

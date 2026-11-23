@@ -24,6 +24,7 @@ function initials(name: string) {
 }
 
 const SIZES = {
+  xs: "h-6 w-6 text-[10px]",
   sm: "h-8 w-8 text-xs",
   md: "h-11 w-11 text-sm",
 };
@@ -48,6 +49,23 @@ export function GlobalAvatar({ size = "md" }: { size?: keyof typeof SIZES }) {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="h-1/2 w-1/2">
         <circle cx="12" cy="12" r="9" />
         <path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3Z" />
+      </svg>
+    </div>
+  );
+}
+
+/** Group avatar: the group's color (from its name) with a "people" icon. */
+export function GroupAvatar({ name, size = "md" }: { name: string; size?: keyof typeof SIZES | "lg" }) {
+  const box = size === "lg" ? "h-20 w-20" : SIZES[size];
+  return (
+    <div
+      className={`${box} flex shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br text-white shadow-sm ${colorFor(name || "group")}`}
+      aria-hidden="true"
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} className="h-1/2 w-1/2">
+        <circle cx="9" cy="8" r="3.2" />
+        <path d="M3 19.5c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5" strokeLinecap="round" />
+        <path d="M16 5.2a3 3 0 0 1 0 5.6M18 14.3c1.8.7 3 2.4 3 5" strokeLinecap="round" />
       </svg>
     </div>
   );

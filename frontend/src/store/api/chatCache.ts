@@ -76,3 +76,19 @@ export function cacheRemoveMessage(
 export function cacheResync(dispatch: AppDispatch) {
   dispatch(invalidateTags(["Rooms", "Messages"]));
 }
+
+/** Add a room to the sidebar, or replace it if it's already there (rename, members changed). */
+export function cacheUpsertRoom(dispatch: AppDispatch, me: string, room: Room) {
+  dispatch(
+    updateQueryData("getMyRooms", me, (draft) => {
+      const i = draft.findIndex((r) => r._id === room._id);
+      if (i === -1) draft.push(room);
+      else draft[i] = room;
+    }),
+  );
+}
+
+/** Remove a room from the sidebar (I left, or an admin removed me). */
+export function cacheRemoveRoom(dispatch: AppDispatch, me: string, roomId: string) {
+  dispatch(updateQueryData("getMyRooms", me, (draft) => draft.filter((r) => r._id !== roomId)));
+}
