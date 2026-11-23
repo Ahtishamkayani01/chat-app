@@ -1,4 +1,17 @@
-import type { Room } from "@/types/chat";
+import type { Message, MessageStatus, Room } from "@/types/chat";
+
+/**
+ * Ticks for one of my messages. In a group it only counts as delivered/seen
+ * once every other member has it (like WhatsApp). Global chat: no ticks.
+ */
+export function messageStatus(m: Message, room: Room | undefined): MessageStatus | undefined {
+  if (!room || room.type === "global" || m.deletedForEveryone) return undefined;
+  const others = room.members.filter((u) => u !== m.sender);
+  if (!others.length) return "sent";
+  if (others.every((u) => m.seenBy?.includes(u))) return "seen";
+  if (others.every((u) => m.deliveredTo?.includes(u))) return "delivered";
+  return "sent";
+}
 
 /** Name to show for a room: "Global chat", the other person in a DM, or the group name. */
 export function roomTitle(room: Room, me: string) {

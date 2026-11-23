@@ -3,7 +3,14 @@ import { Message } from "../models/message.model";
 import { User } from "../models/user.model";
 import { isValidObjectId, Types } from "mongoose";
 import { Room } from "../models/room.model";
-import { deleteForEveryone, deleteForMe, refreshLastMessage, sendMessage } from "../services/message.service";
+import {
+  deleteForEveryone,
+  deleteForMe,
+  markDelivered,
+  markSeen,
+  refreshLastMessage,
+  sendMessage,
+} from "../services/message.service";
 
 const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 //helper
@@ -40,6 +47,22 @@ async function broadcast(
     io.to(channels).emit(event, data);
   }
 }
+// Tells a room's members that `username` received/saw some messages
+async function emitStatus(
+  io: Server,
+  username: string,
+  type: "delivered" | "seen",
+  updates: { roomId: string; ids: string[] }[],
+) {
+  for (const { roomId, ids } of updates) {
+    await broadcast(io, roomId, "message:status", {
+      roomId,
+      ids,
+      username,
+      type,
+    });
+  }
+}
 
 export function registerMessageHandlers(io: Server, socket: Socket) {
   console.log("handlers registering forn socket", socket.id);
@@ -50,7 +73,24 @@ export function registerMessageHandlers(io: Server, socket: Socket) {
       const username = socket.data.username as string;
       await User.updateOne({ username }, { $set: { lastSeen: new Date() } }); // no upsert
       socket.join(`user:${username}`); // personal channel for DMs/groups
+      // messages sent while they were offline are delivered now
+      await emitStatus(
+        io,
+        username,
+        "delivered",
+        await markDelivered(username),
+      );
       return { username };
+    }),
+  );
+
+  // SEEN   payload: { roomId }  (sent while the chat is open on screen)
+  socket.on("message:seen", (payload, ack) =>
+    withAck(ack, async () => {
+      const username = socket.data.username as string;
+      const updates = await markSeen(str(payload?.roomId), username);
+      await emitStatus(io, username, "seen", updates);
+      return updates;
     }),
   );
 
@@ -75,6 +115,19 @@ export function registerMessageHandlers(io: Server, socket: Socket) {
       console.log("[send] broadcast message:new", data._id);
 
       return data; // withAck sends this back as { ok: true, data }
+    }),
+  );
+
+  // DELIVERED   payload: { ids: string[] }  (sent by the receiver's app on message:new)
+  socket.on("message:delivered", (payload, ack) =>
+    withAck(ack, async () => {
+      const username = socket.data.username as string;
+      const ids = Array.isArray(payload?.ids) ? payload.ids.map(str) : [];
+      if (!ids.length) return [];
+
+      const updates = await markDelivered(username, ids);
+      await emitStatus(io, username, "delivered", updates);
+      return updates;
     }),
   );
 

@@ -2,7 +2,7 @@ import { AttachmentKind, Iattachment, Message } from "../models/message.model";
 import { kindOf } from "../utils/fileKind";
 import { getRoomForMember } from "./room.service";
 import { Room } from "../models/room.model";
-import { Types } from "mongoose";
+import { isValidObjectId, Types } from "mongoose";
 import { deleteAttachmentFile } from "./upload.service";
 
 // Sidebar label when a message has no caption. No emojis here: the frontend
@@ -176,4 +176,65 @@ export async function deleteForEveryone(messageId: string, username: string) {
 
   const lastMessage = await refreshLastMessage(message.room);
   return { message, lastMessage };
+}
+
+export async function markDelivered(username: string, messageIds?: string[]) {
+  // only direct and group rooms they're in (the global room only gets the single tick)
+  const rooms = await Room.find(
+    { type: { $ne: "global" }, members: username },
+    "_id",
+  );
+
+  const filter: Record<string, unknown> = {
+    room: { $in: rooms.map((r) => r._id) },
+    sender: { $ne: username }, // not their own messages
+    deliveredTo: { $ne: username }, // not already delivered
+    deletedForEveryone: false,
+  };
+  if (messageIds) {
+    filter._id = { $in: messageIds.filter((id) => isValidObjectId(id)) };
+  }
+
+  const pending = await Message.find(filter, "_id room");
+  if (!pending.length) return [];
+
+  await Message.updateMany(
+    { _id: { $in: pending.map((m) => m._id) } },
+    { $addToSet: { deliveredTo: username } },
+  );
+
+  // group by room: { roomId, ids[] }
+  const byRoom = new Map<string, string[]>();
+  for (const m of pending) {
+    const roomId = m.room.toString();
+    byRoom.set(roomId, [...(byRoom.get(roomId) ?? []), m._id.toString()]);
+  }
+  return [...byRoom].map(([roomId, ids]) => ({ roomId, ids }));
+}
+
+// Marks every message from others in this room as seen (and delivered) by `username`.
+// Returns the same { roomId, ids }[]
+export async function markSeen(roomId: string, username: string) {
+  const room = await getRoomForMember(roomId, username); // throws if not a member
+  if (room.type === "global") return []; // global only gets the single tick
+
+  const pending = await Message.find(
+    {
+      room: room._id,
+      sender: { $ne: username },
+      seenBy: { $ne: username }, // not already seen
+      deletedForEveryone: false,
+    },
+    "_id",
+  );
+  if (!pending.length) return [];
+
+  await Message.updateMany(
+    { _id: { $in: pending.map((m) => m._id) } },
+    { $addToSet: { seenBy: username, deliveredTo: username } },
+  );
+
+  return [
+    { roomId: room._id.toString(), ids: pending.map((m) => m._id.toString()) },
+  ];
 }

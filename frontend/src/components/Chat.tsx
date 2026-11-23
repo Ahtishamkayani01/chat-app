@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Attachment, DeleteScope, Message, Room } from "@/types/chat";
+import type { Attachment, DeleteScope, Message, Room, StatusEvent } from "@/types/chat";
 
 type DeletedEvent = { id: string; roomId: string; lastMessage?: Room["lastMessage"] | null };
 import { socket, emitAsync } from "@/lib/socket";
 import { formatDay, isSameDay } from "@/lib/format";
 import { getErrorMessage } from "@/lib/errors";
-import { groupSubtitle, roomTitle } from "@/lib/rooms";
+import { groupSubtitle, messageStatus, roomTitle } from "@/lib/rooms";
 import { clearSession, expireSession, getSession, saveSession, SESSION_EXPIRED_EVENT, type Session } from "@/lib/auth";
 import { useAppDispatch } from "@/store/hooks";
 import {
@@ -24,6 +24,7 @@ import {
 } from "@/store/api/chatApi";
 import {
   cacheAddMessage,
+  cacheApplyStatus,
   cacheRemoveMessage,
   cacheRemoveRoom,
   cacheReplaceMessage,
@@ -52,6 +53,7 @@ export default function Chat() {
 
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null); // null = global
   const activeRoomIdRef = useRef<string | null>(null); // read inside socket listeners
+  const globalRoomIdRef = useRef<string | null>(null); // global messages get no delivered/seen
   const [mobileShowChat, setMobileShowChat] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false); // group info panel
   const [unread, setUnread] = useState<Record<string, number>>({}); // keyed by roomId
@@ -103,7 +105,8 @@ export default function Chat() {
 
   useEffect(() => {
     activeRoomIdRef.current = activeRoomId;
-  }, [activeRoomId]);
+    globalRoomIdRef.current = globalRoom?._id ?? null;
+  }, [activeRoomId, globalRoom?._id]);
 
   // ---------- real-time connection ----------
 
@@ -130,6 +133,10 @@ export default function Chat() {
 
     function onNew(msg: Message) {
       cacheAddMessage(dispatch, me, msg);
+      // Tell the sender my app got it (→ double tick). No ack needed.
+      if (msg.sender !== me && msg.room !== globalRoomIdRef.current) {
+        socket.emit("message:delivered", { ids: [msg._id] });
+      }
       if (msg.room !== activeRoomIdRef.current && msg.sender !== me) {
         setUnread((prev) => ({ ...prev, [msg.room]: (prev[msg.room] || 0) + 1 }));
       }
@@ -141,6 +148,11 @@ export default function Chat() {
 
     function onDeleted({ id, roomId, lastMessage }: DeletedEvent) {
       cacheRemoveMessage(dispatch, me, roomId, id, lastMessage);
+    }
+
+    // Someone received / saw messages: update their ticks
+    function onStatus(ev: StatusEvent) {
+      cacheApplyStatus(dispatch, me, ev);
     }
 
     // Groups: I was added / something changed (name, members) / I'm no longer in it
@@ -164,6 +176,7 @@ export default function Chat() {
     socket.on("message:new", onNew);
     socket.on("message:updated", onUpdated);
     socket.on("message:deleted", onDeleted);
+    socket.on("message:status", onStatus);
     socket.on("room:new", onRoomUpsert);
     socket.on("room:updated", onRoomUpsert);
     socket.on("room:removed", onRoomRemoved);
@@ -176,6 +189,7 @@ export default function Chat() {
       socket.off("message:new", onNew);
       socket.off("message:updated", onUpdated);
       socket.off("message:deleted", onDeleted);
+      socket.off("message:status", onStatus);
       socket.off("room:new", onRoomUpsert);
       socket.off("room:updated", onRoomUpsert);
       socket.off("room:removed", onRoomRemoved);
@@ -193,6 +207,29 @@ export default function Chat() {
     window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
     return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
   });
+
+  // Seen: while this chat is actually on screen, tell the server (→ blue ticks for the sender).
+  // Runs again when new messages arrive and when I come back to the tab.
+  useEffect(() => {
+    if (!username || !connected || !activeRoom || activeRoom.type === "global") return;
+    const me = username;
+    const roomId = activeRoom._id;
+
+    function markSeen() {
+      if (document.visibilityState !== "visible") return; // tab in background
+      // On desktop the chat is always on screen; on a phone only after opening a room
+      const desktop = window.matchMedia("(min-width: 48rem)").matches; // Tailwind md
+      if (!desktop && !mobileShowChat) return; // phone is showing the room list
+      const unseen = messages.some(
+        (m) => m.sender !== me && !m.deletedForEveryone && !m.seenBy?.includes(me),
+      );
+      if (unseen) socket.emit("message:seen", { roomId });
+    }
+
+    markSeen();
+    document.addEventListener("visibilitychange", markSeen);
+    return () => document.removeEventListener("visibilitychange", markSeen);
+  }, [username, connected, activeRoom, messages, mobileShowChat]);
 
   // Scroll to bottom when messages are added; jump instantly when switching rooms.
   useEffect(() => {
@@ -471,6 +508,7 @@ export default function Chat() {
                   <MessageItem
                     message={m}
                     mine={m.sender === username}
+                    status={m.sender === username ? messageStatus(m, activeRoom) : undefined}
                     showSender={showSender}
                     showNames={isGlobal || isGroup}
                     onOpenDm={(name) => void openDmFromMessage(name)}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { DeleteScope, Message } from "@/types/chat";
+import type { DeleteScope, Message, MessageStatus } from "@/types/chat";
 import { formatTime } from "@/lib/format";
 import { DELETED_TEXT, DELETE_FOR_EVERYONE_LIMIT_MS } from "@/lib/attachments";
 import { Avatar } from "./Avatar";
@@ -37,9 +37,44 @@ function BanIcon() {
   );
 }
 
+const STATUS_LABEL: Record<MessageStatus, string> = {
+  sent: "Sent",
+  delivered: "Delivered",
+  seen: "Seen",
+};
+
+/** ✓ sent, ✓✓ delivered, ✓✓ in light blue when seen (readable on the cobalt bubble) */
+function Ticks({ status }: { status: MessageStatus }) {
+  return (
+    <svg
+      viewBox="0 0 18 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`h-3 w-[18px] shrink-0 ${status === "seen" ? "text-sky-300" : ""}`}
+      role="img"
+      aria-label={STATUS_LABEL[status]}
+    >
+      <title>{STATUS_LABEL[status]}</title>
+      {status === "sent" ? (
+        <path d="M3.5 6.5 7 10l6.5-7.5" />
+      ) : (
+        <>
+          <path d="M1 6.5 4.5 10 11 2.5" />
+          <path d="m8.5 9.5.5.5 6.5-7.5" />
+        </>
+      )}
+    </svg>
+  );
+}
+
 type Props = {
   message: Message;
   mine: boolean;
+  /** Ticks for my messages in direct/group chats (undefined = no ticks). */
+  status?: MessageStatus;
   /** First message in a run from the same sender (shows name + avatar in global chat). */
   showSender: boolean;
   /** Global + group chats show avatars and names; a 1-to-1 chat doesn't need them. */
@@ -52,6 +87,7 @@ type Props = {
 export default function MessageItem({
   message: m,
   mine,
+  status,
   showSender,
   showNames,
   onOpenDm,
@@ -121,6 +157,13 @@ export default function MessageItem({
 
   const showAvatarColumn = showNames && !mine;
   const timeLabel = `${edited ? "edited · " : ""}${formatTime(m.createdAt)}`;
+  // time + ticks, used both for the visible stamp and its invisible spacer
+  const meta = (
+    <>
+      {timeLabel}
+      {status && <Ticks status={status} />}
+    </>
+  );
 
   return (
     <div
@@ -271,7 +314,7 @@ export default function MessageItem({
                 >
                   {m.text}
                   {/* Invisible spacer so the timestamp never overlaps text */}
-                  <span className="invisible ml-2 inline-block text-[10px]">{timeLabel}</span>
+                  <span className="invisible ml-2 inline-flex items-center gap-0.5 text-[10px]">{meta}</span>
                 </p>
               ) : (
                 // Room for the timestamp under a file / voice note without caption
@@ -279,13 +322,13 @@ export default function MessageItem({
               )}
 
               <span
-                className={`pointer-events-none absolute text-[10px] ${
+                className={`pointer-events-none absolute inline-flex items-center gap-0.5 text-[10px] ${
                   !m.text && isMedia
                     ? "right-2.5 bottom-2.5 rounded-full bg-black/45 px-1.5 py-0.5 text-white"
                     : `right-3 bottom-1.5 ${mine && !deleted ? "text-white/70" : "text-stone-400"}`
                 }`}
               >
-                {timeLabel}
+                {meta}
               </span>
             </div>
           </div>

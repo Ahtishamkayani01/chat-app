@@ -26,6 +26,8 @@ export interface Imessage {
   attachment?: Iattachment;
   deletedFor: string[];
   deletedForEveryone: boolean;
+  deliveredTo: string[]; // usernames whose app has received it
+  seenBy: string[]; // usernames who have seen it
   deletedAt?: Date;
 }
 
@@ -54,6 +56,8 @@ const messageSchema = new Schema<Imessage>(
   {
     room: { type: Schema.Types.ObjectId, ref: "Room", required: true },
     sender: { type: String, required: true, trim: true },
+    deliveredTo: { type: [String], default: [] },
+    seenBy: { type: [String], default: [] },
     text: { type: String, trim: true, maxLength: 1000, default: "" },
     attachment: { type: attachmentSchema, required: false },
     deletedFor: { type: [String], default: [] },

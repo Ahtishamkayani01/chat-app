@@ -1,5 +1,5 @@
 import type { AppDispatch } from "../store";
-import type { Message, Room } from "@/types/chat";
+import type { Message, Room, StatusEvent } from "@/types/chat";
 import { chatApi } from "./chatApi";
 import { messagePreview } from "@/lib/attachments";
 
@@ -44,6 +44,25 @@ export function cacheReplaceMessage(dispatch: AppDispatch, me: string, msg: Mess
         // replace (not merge) so an old "kind" icon doesn't stay after delete-for-everyone
         const { sender, at } = room.lastMessage;
         room.lastMessage = { ...messagePreview(msg), sender, at };
+      }
+    }),
+  );
+}
+
+/** Someone received or saw some messages: add them to deliveredTo / seenBy. */
+export function cacheApplyStatus(dispatch: AppDispatch, me: string, ev: StatusEvent) {
+  const ids = new Set(ev.ids);
+  dispatch(
+    updateQueryData("getRoomMessages", { roomId: ev.roomId, user: me }, (draft) => {
+      for (const m of draft) {
+        if (!ids.has(m._id)) continue;
+        // seen also means delivered (same as markSeen on the server)
+        const delivered = (m.deliveredTo ??= []);
+        if (!delivered.includes(ev.username)) delivered.push(ev.username);
+        if (ev.type === "seen") {
+          const seen = (m.seenBy ??= []);
+          if (!seen.includes(ev.username)) seen.push(ev.username);
+        }
       }
     }),
   );
