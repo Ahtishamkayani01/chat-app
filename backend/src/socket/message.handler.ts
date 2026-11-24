@@ -149,7 +149,7 @@ export function registerMessageHandlers(io: Server, socket: Socket) {
         throw new Error("Can't edit a deleted message");
       const message = await Message.findByIdAndUpdate(
         id,
-        { text },
+        { text, editedAt: new Date() },
         { returnDocument: "after", runValidators: true },
       ); // return the UPDATED doc);
       if (!message) throw new Error("Message not found");

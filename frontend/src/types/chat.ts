@@ -26,6 +26,7 @@ export interface Message {
   attachment?: Attachment;
   deletedForEveryone?: boolean; // sender deleted it: show a placeholder
   deletedAt?: string;
+  editedAt?: string; // only set when the sender edited the text
   createdAt: string;
   updatedAt: string;
 }

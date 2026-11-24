@@ -103,7 +103,7 @@ export default function MessageItem({
   const rootRef = useRef<HTMLDivElement>(null);
 
   const deleted = !!m.deletedForEveryone; // placeholder: no text, no file
-  const edited = !deleted && m.updatedAt !== m.createdAt;
+  const edited = !deleted && !!m.editedAt;
   const a = deleted ? undefined : m.attachment;
   const isMedia = a?.kind === "image" || a?.kind === "video";
   const canEdit = mine && !deleted && !!m.text; // edit = change the text / caption

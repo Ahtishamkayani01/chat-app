@@ -40,7 +40,7 @@ export async function updateMessage(req: Request, res: Response) {
 
   const message = await Message.findOneAndUpdate(
     { _id: messageId, sender, deletedForEveryone: { $ne: true } }, // only the author, not deleted
-    { text },
+    { text, editedAt: new Date() },
     { returnDocument: "after", runValidators: true },
   );
   if (!message) {

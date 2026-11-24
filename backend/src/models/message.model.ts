@@ -29,6 +29,7 @@ export interface Imessage {
   deliveredTo: string[]; // usernames whose app has received it
   seenBy: string[]; // usernames who have seen it
   deletedAt?: Date;
+  editedAt?: Date; // set only when the sender edits the text
 }
 
 const attachmentSchema = new Schema<Iattachment>(
@@ -63,6 +64,7 @@ const messageSchema = new Schema<Imessage>(
     deletedFor: { type: [String], default: [] },
     deletedForEveryone: { type: Boolean, default: false },
     deletedAt: Date,
+    editedAt: Date,
   },
   {
     timestamps: true,

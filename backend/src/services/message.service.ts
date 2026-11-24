@@ -146,6 +146,7 @@ export async function deleteForMe(messageId: string, username: string) {
   await Message.updateOne(
     { _id: message._id },
     { $addToSet: { deletedFor: username } },
+    { timestamps: false }, // hiding it is not an edit
   );
   return { id: messageId, roomId: String(message.room) };
 }
@@ -201,6 +202,7 @@ export async function markDelivered(username: string, messageIds?: string[]) {
   await Message.updateMany(
     { _id: { $in: pending.map((m) => m._id) } },
     { $addToSet: { deliveredTo: username } },
+    { timestamps: false }, // receipts must not bump updatedAt
   );
 
   // group by room: { roomId, ids[] }
@@ -232,6 +234,7 @@ export async function markSeen(roomId: string, username: string) {
   await Message.updateMany(
     { _id: { $in: pending.map((m) => m._id) } },
     { $addToSet: { seenBy: username, deliveredTo: username } },
+    { timestamps: false }, // receipts must not bump updatedAt
   );
 
   return [
